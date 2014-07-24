@@ -1,0 +1,151 @@
+case $__script_lib_have_math_tobasen in
+1)
+	return 0
+	;;
+esac
+
+case $SCRIPT_LIB_ROOT in
+"")
+	_libroot=/usr/share/scriptlib
+	;;
+*)
+	_libroot=$SCRIPT_LIB_ROOT
+	;;
+esac
+
+#
+# $1 - output base [1-63] (default 10)
+# stdin - integers to convert
+#
+# reads stdin, converts integers to output base, writes stdout.
+#
+# the base of input numbers is recognized in common shell
+# fashion based on leading characters:
+#
+# leading chars:
+#
+# 0     - base(8)
+# [1-9] - base(10)
+# 0x    - base(16)
+# n#    - base(n) (see CAVEATS)
+#
+#EXIT STATUS
+#
+# 0 - everything is cool
+# 1 - input data illegal for shell
+# 2 - output base illegal for function
+#
+#CAVEATS
+#
+# valid input bases for the ``n#'' notation are dictated by
+# what the shell supports.  in particular, pdksh supports 2-36,
+# whereas bash supports 2-63.
+#
+tobasen()
+{
+	local _min=1 _max=63
+	local _base=${1:-10}
+	local _line=""
+	local _number=0
+	local _input="" _output=""
+	local _x=0
+
+
+	if [[ _base -lt _min ]] || [[ _base -gt _max ]]; then
+		#
+		# output base out of range
+		#
+		return 2
+	fi
+
+	#
+	# digit character lookup table
+	#
+	local _digit[0]=0
+
+	#
+	# do not join this to the local above, this is done
+	# like to to work around the bug in bash 2.01b that
+	# debian-stable continues to use even though it is
+	# A) BUGGY and B) FIVE YEARS OLD
+	#
+	_digit[1]=1 _digit[2]=2 _digit[3]=3 _digit[4]=4 \
+	_digit[5]=5 _digit[6]=6 _digit[7]=7 _digit[8]=8 \
+	_digit[9]=9 _digit[10]=a _digit[11]=b _digit[12]=c \
+	_digit[13]=d _digit[14]=e _digit[15]=f _digit[16]=g \
+	_digit[17]=h _digit[18]=i _digit[19]=j _digit[20]=k \
+	_digit[21]=l _digit[22]=m _digit[23]=n _digit[24]=o \
+	_digit[25]=p _digit[26]=q _digit[27]=r _digit[28]=s \
+	_digit[29]=t _digit[30]=u _digit[31]=v _digit[32]=w \
+	_digit[33]=x _digit[34]=y _digit[35]=z _digit[36]=A \
+	_digit[37]=B _digit[38]=C _digit[39]=D _digit[40]=E \
+	_digit[41]=F _digit[42]=G _digit[43]=H _digit[44]=I \
+	_digit[45]=J _digit[46]=K _digit[47]=L _digit[48]=M \
+	_digit[49]=N _digit[50]=O _digit[51]=P _digit[52]=Q \
+	_digit[53]=R _digit[54]=S _digit[55]=T _digit[56]=U \
+	_digit[57]=V _digit[58]=W _digit[59]=X _digit[60]=Y \
+	_digit[61]=Z _digit[62]=@ _digit[63]=_
+
+	while read _line; do
+		for _input in $_line; do
+
+			#
+			# make sure the shell handles this type of
+			# input ( eg, ``63#num'' is ok for bash, but
+			# unsupported in pdksh ).
+			#
+			# use a subshell so we can redir the output on error.
+			#
+			if ! (echo $(( $_input ))) >/dev/null 2>&1; then
+				return 1
+			fi
+
+			#
+			# add a space between output numbers if we've
+			# done our first one.
+			#
+			if [[ ! -z "${_output}" ]]; then
+				#
+				# clear _output because we need to construct it
+				# piecemeal each time
+				#
+				_output=""
+				echo -n " "
+			fi
+
+			#
+			# convert _input into a decimal number for
+			# ease of working with it (less $((...))
+			# constructs in this code = easier to read),
+			# and also to leave _input pristine.
+			#
+			_number=$(( _input ))
+			if [[ _base -gt 1 ]]; then
+				while :; do
+					if [[ _number -lt _base ]]; then
+						_output=${_digit[_number]}${_output}
+						break
+					else
+						_output=${_digit[_number % _base]}${_output}
+						let _number/=_base
+					fi
+				done
+			else
+				#
+				# special case for base(1) numbers
+				# because the math that works for
+				# the bigger stuff doesn't work here
+				#
+				_x=0
+				while [[ _x -lt _number ]]; do
+					_output=${_digit[_base]}${_output}
+					let ++_x
+				done
+			fi
+			echo -n $_output
+		done
+	done
+	echo
+}
+
+__script_lib_have_math_tobasen=1
