@@ -15,25 +15,17 @@ esac
 
 #
 # $1 - output base [1-63] (default 10)
-# stdin - integers to convert
+# $2 ... $@ - integers to convert
 #
-# reads stdin, converts integers to output base, writes stdout.
+# converts integers to output base, writes stdout.
 #
-# the base of input numbers is recognized in common shell
-# fashion based on leading characters:
-#
-# leading chars:
-#
-# 0     - base(8)
-# [1-9] - base(10)
-# 0x    - base(16)
-# n#    - base(n) (see CAVEATS)
+# - 'output base' will be interpreted according to
+#   Arithmetic Subsitution/Expansion (ie ``$(( ... ))'').
 #
 #EXIT STATUS
 #
 # 0 - everything is cool
-# 1 - input data illegal for shell
-# 2 - output base illegal for function
+# 1 - something wasn't
 #
 #CAVEATS
 #
@@ -43,13 +35,45 @@ esac
 #
 tobasen()
 {
+	local funcname=tobasen
+	local usage="$funcname(): usage: $funcname [-b output_base] input_integer [...]"
 	local _min=1 _max=63
-	local _base=${1:-10}
+	local default_output_base=10
+	local output_base
+	local ch
 	local _line=""
 	local _number=0
 	local _input="" _output=""
 	local _x=0
 
+	OPTIND=1
+	while getopts b ch; do
+		case $ch in
+		b)
+			output_base=$OPTARG
+			;;
+		*)
+			echo "$usage"
+			return 1
+			;;
+		esac
+	done
+	if [ $# -gt 1 ]; then
+		shift $(( $OPTIND - 1 ))
+	fi
+	
+	if [ -z "$output_base" ]; then
+		output_base=$default_output_base
+	else
+		output_base=$1
+	fi
+
+	case $(( $output_base )) in
+	*[!0-9]*)
+		echo "$funcname(): invalid output_base: '$output_base'"
+		return 1
+		;;
+	esac
 
 	if [[ _base -lt _min ]] || [[ _base -gt _max ]]; then
 		#
