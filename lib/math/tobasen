@@ -14,8 +14,7 @@ case $SCRIPT_LIB_ROOT in
 esac
 
 #
-# $1 - output base [1-63] (default 10)
-# $2 ... $@ - integers to convert
+# see 'local usage' for usage.
 #
 # converts integers to output base, writes stdout.
 #
@@ -37,7 +36,7 @@ tobasen()
 {
 	local funcname=tobasen
 	local usage="$funcname(): usage: $funcname [-b output_base] input_integer [...]"
-	local _min=1 _max=63
+	local min=1 max=63
 	local default_output_base=10
 	local output_base
 	local ch
@@ -65,21 +64,20 @@ tobasen()
 	if [ -z "$output_base" ]; then
 		output_base=$default_output_base
 	else
-		output_base=$1
+		output_base=$(( $1 ))
 	fi
 
-	case $(( $output_base )) in
+	case $output_base in
 	*[!0-9]*)
 		echo "$funcname(): invalid output_base: '$output_base'"
 		return 1
 		;;
 	esac
 
-	if [[ _base -lt _min ]] || [[ _base -gt _max ]]; then
-		#
-		# output base out of range
-		#
-		return 2
+	
+	if [ $output_base -lt $min ] || [ $output_base -gt $max ]; then
+		echo "$funcname(): output_base '$output_base' out of range: '$min - $max'"
+		return 1
 	fi
 
 	#
