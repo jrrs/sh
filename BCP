@@ -26,6 +26,7 @@ generally speaking, any instance of code that goes against this BCP is just beca
 - quote ALL parameter dereferences (e.g.: when you say "$PARAMETER") in every case other than in arithmetic expressions.  quoting them in arithmetic can be counterproductive as a null valued parameter will evaluate to '0' when unquoted, but '' when quoted.
 - inside arithmetic expressions, in the rare case where doing so increases code clarity (or when actual assignment is being performed therein), it is acceptable to omit the '$' sign.
 - in most cases, the double-quoted "$@" is what you want to use to refer to the arguments given to the script or a function.  the desired/legit uses for '$*' are relatively rare.
+- keep parameter names consistent with commandline/function argument descriptions.  e.g.: if usage() says: "... [-m module_name]", then use 'module_name' as the name of the parameter in the corresponding code, don't abbreviate it to 'modname' or something.
 
 # EVALUATIONS
 - again, always quote parameters
