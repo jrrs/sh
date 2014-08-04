@@ -1,0 +1,730 @@
+#!/bin/sh
+
+set -e
+
+progname=${##0}
+
+
+#
+# XXX
+# - would be nice to not have so many nested loops
+# - need to test movement in each direction to correctly spot gameover
+# - '8 4 4 8' when moved right should be '. 8 8 8', but it's turning into '. . 16 8'
+#
+
+# just in case we don't turn this back on, be polite
+trap 'stty echo' EXIT
+
+usage()
+{
+	printf -- 'usage: %s [test]\n' --  "$progname"
+	printf -- 'test -- run the not-fully-exhaustive testcases\n' # todo implement
+}
+
+moves=0
+score=0
+
+#
+#   aaaa | bbbb | cccc | dddd
+# -------+------+------+-------
+#   eeee | ffff | gggg | hhhh
+# -------+------+------+-------
+#   iiii | jjjj | kkkk | llll
+# -------+------+------+-------
+#   mmmm | nnnn | oooo | pppp
+#
+
+game_map=$(( 2#0000000000000000 ))
+turn_map=$(( 2#0000000000000000 ))
+full=$(( 2#1111111111111111 ))
+
+a=0 a_bit=$(( 2#0000000000000001 ))
+b=0 b_bit=$(( 2#0000000000000010 ))
+c=0 c_bit=$(( 2#0000000000000100 ))
+d=0 d_bit=$(( 2#0000000000001000 ))
+e=0 e_bit=$(( 2#0000000000010000 ))
+f=0 f_bit=$(( 2#0000000000100000 ))
+g=0 g_bit=$(( 2#0000000001000000 ))
+h=0 h_bit=$(( 2#0000000010000000 ))
+i=0 i_bit=$(( 2#0000000100000000 ))
+j=0 j_bit=$(( 2#0000001000000000 ))
+k=0 k_bit=$(( 2#0000010000000000 ))
+l=0 l_bit=$(( 2#0000100000000000 ))
+m=0 m_bit=$(( 2#0001000000000000 ))
+n=0 n_bit=$(( 2#0010000000000000 ))
+o=0 o_bit=$(( 2#0100000000000000 ))
+p=0 p_bit=$(( 2#1000000000000000 ))
+
+runtests()
+{
+	local x
+
+	game_map=$full
+	x=$(flip game a)
+	case $x in $(( 2#1111111111111110 ))) ;; *) failed to flip game a: $(echo "obase=2; $x" | bc) ;; esac
+	game_map=$x
+	x=$(flip game a)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game a back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=$full
+	x=$(flip game b)
+	case $x in $(( 2#1111111111111101 ))) ;; *) failed to flip game b: $(echo "obase=2; $x" | bc) ;; esac
+	game_map=$x
+	x=$(flip game b)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game b back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=$full
+	x=$(flip game c)
+	case $x in $(( 2#1111111111111011 ))) ;; *) failed to flip game c: $(echo "obase=2; $x" | bc) ;; esac
+	game_map=$x
+	x=$(flip game c)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game c back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=$full
+	x=$(flip game d)
+	case $x in $(( 2#1111111111110111 ))) ;; *) failed to flip game d: $(echo "obase=2; $x" | bc) ;; esac
+	game_map=$x
+	x=$(flip game d)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game d back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=$full
+	x=$(flip game e)
+	case $x in $(( 2#1111111111101111 ))) ;; *) failed to flip game e: $(echo "obase=2; $x" | bc) ;; esac
+	game_map=$x
+	x=$(flip game e)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game e back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=$full
+	x=$(flip game f)
+	case $x in $(( 2#1111111111011111 ))) ;; *) failed to flip game f: $(echo "obase=2; $x" | bc) ;; esac
+	game_map=$x
+	x=$(flip game f)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game f back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=$full
+	x=$(flip game g)
+	case $x in $(( 2#1111111110111111 ))) ;; *) failed to flip game g: $(echo "obase=2; $x" | bc) ;; esac
+	game_map=$x
+	x=$(flip game g)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game g back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=$full
+	x=$(flip game h)
+	case $x in $(( 2#1111111101111111 ))) ;; *) failed to flip game h: $(echo "obase=2; $x" | bc) ;; esac
+	game_map=$x
+	x=$(flip game h)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game h back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=$full
+	x=$(flip game i)
+	case $x in $(( 2#1111111011111111 ))) ;; *) failed to flip game i: $(echo "obase=2; $x" | bc) ;; esac
+	game_map=$x
+	x=$(flip game i)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game i back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=$full
+	x=$(flip game j)
+	case $x in $(( 2#1111110111111111 ))) ;; *) failed to flip game j: $(echo "obase=2; $x" | bc) ;; esac
+	game_map=$x
+	x=$(flip game j)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game j back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=$full
+	x=$(flip game k)
+	case $x in $(( 2#1111101111111111 ))) ;; *) failed to flip game k: $(echo "obase=2; $x" | bc) ;; esac
+	game_map=$x
+	x=$(flip game k)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game k back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=$full
+	x=$(flip game l)
+	case $x in $(( 2#1111011111111111 ))) ;; *) failed to flip game l: $(echo "obase=2; $x" | bc) ;; esac
+	game_map=$x
+	x=$(flip game l)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game l back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=$full
+	x=$(flip game m)
+	case $x in $(( 2#1110111111111111 ))) ;; *) failed to flip game m: $(echo "obase=2; $x" | bc) ;; esac
+	game_map=$x
+	x=$(flip game m)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game m back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=$full
+	x=$(flip game n)
+	case $x in $(( 2#1101111111111111 ))) ;; *) failed to flip game n: $(echo "obase=2; $x" | bc) ;; esac
+	game_map=$x
+	x=$(flip game n)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game n back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=$full
+	x=$(flip game o)
+	case $x in $(( 2#1011111111111111 ))) ;; *) failed to flip game o: $(echo "obase=2; $x" | bc) ;; esac
+	game_map=$x
+	x=$(flip game o)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game o back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=$full
+	x=$(flip game p)
+	case $x in $(( 2#0111111111111111 ))) ;; *) failed to flip game p: $(echo "obase=2; $x" | bc);; esac
+	game_map=$x
+	x=$(flip game p)
+	case $x in $(( 2#1111111111111111 ))) ;; *) failed to flip game p back: $(echo "obase=2; $x" | bc) ;; esac
+
+	game_map=0
+	game_map=$(flip game a)
+	case $game_map in $(( 2#0000000000000001 ))) ;; *) failed to flip game a in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+	game_map=$(flip game b)
+	case $game_map in $(( 2#0000000000000011 ))) ;; *) failed to flip game b in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+	game_map=$(flip game c)
+	case $game_map in $(( 2#0000000000000111 ))) ;; *) failed to flip game c in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+	game_map=$(flip game d)
+	case $game_map in $(( 2#0000000000001111 ))) ;; *) failed to flip game d in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+	game_map=$(flip game e)
+	case $game_map in $(( 2#0000000000011111 ))) ;; *) failed to flip game e in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+	game_map=$(flip game f)
+	case $game_map in $(( 2#0000000000111111 ))) ;; *) failed to flip game f in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+	game_map=$(flip game g)
+	case $game_map in $(( 2#0000000001111111 ))) ;; *) failed to flip game g in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+	game_map=$(flip game h)
+	case $game_map in $(( 2#0000000011111111 ))) ;; *) failed to flip game h in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+	game_map=$(flip game i)
+	case $game_map in $(( 2#0000000111111111 ))) ;; *) failed to flip game i in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+	game_map=$(flip game j)
+	case $game_map in $(( 2#0000001111111111 ))) ;; *) failed to flip game j in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+	game_map=$(flip game k)
+	case $game_map in $(( 2#0000011111111111 ))) ;; *) failed to flip game k in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+	game_map=$(flip game l)
+	case $game_map in $(( 2#0000111111111111 ))) ;; *) failed to flip game l in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+	game_map=$(flip game m)
+	case $game_map in $(( 2#0001111111111111 ))) ;; *) failed to flip game m in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+	game_map=$(flip game n)
+	case $game_map in $(( 2#0011111111111111 ))) ;; *) failed to flip game n in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+	game_map=$(flip game o)
+	case $game_map in $(( 2#0111111111111111 ))) ;; *) failed to flip game o in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+	game_map=$(flip game p)
+	case $game_map in $(( 2#1111111111111111 ))) ;; *) failed to flip game p in sequence: $(echo "obase=2; $game_map" | bc) ;; esac
+
+	case $game_map in
+	$full)
+		;;
+	*)
+		failed to flip game everything in sequence: $(echo "obase=2; $x" | bc)
+		;;
+	esac
+}
+
+
+flip()
+{
+	local funcname=flip
+	local usage="$funcname: (game|turn) bit"
+	local map bit
+
+	if [ $# -ne 2 ]; then
+		echo "$funcname(): invalid arguments" 1>&2
+		echo "$usage" 1>&2
+		return 1
+	fi
+
+	map=$1
+	case $map in
+	game|turn)
+		;;
+	*)
+		failed "to give correct '\$1' to flip()"
+		;;
+	esac
+	shift
+
+	bit=$1
+	case $bit in
+	a) bit=$a_bit ;;
+	b) bit=$b_bit ;;
+	c) bit=$c_bit ;;
+	d) bit=$d_bit ;;
+	e) bit=$e_bit ;;
+	f) bit=$f_bit ;;
+	g) bit=$g_bit ;;
+	h) bit=$h_bit ;;
+	i) bit=$i_bit ;;
+	j) bit=$j_bit ;;
+	k) bit=$k_bit ;;
+	l) bit=$l_bit ;;
+	m) bit=$m_bit ;;
+	n) bit=$n_bit ;;
+	o) bit=$o_bit ;;
+	p) bit=$p_bit ;;
+	*) echo "$funcname: invalid bit: '$1'"; return 1;;
+	esac
+
+	case $map in
+	game)
+		echo $(( $game_map ^ $bit ))
+		;;
+	turn)
+		echo $(( $turn_map ^ $bit ))
+		;;
+	esac
+
+}
+
+failed()
+{
+	echo 1>&2 "$progname: failed: '${@:-no reason given}'"
+	exit 1
+}
+
+draw()
+{
+	local horiz='. -------+------+------+-------'
+
+	local A B C D E F G H I J K L M N O P
+
+	if [ $a -eq 0 ]; then A='.'; else A=$(( a )); fi
+	if [ $b -eq 0 ]; then B='.'; else B=$(( b )); fi
+	if [ $c -eq 0 ]; then C='.'; else C=$(( c )); fi
+	if [ $d -eq 0 ]; then D='.'; else D=$(( d )); fi
+	if [ $e -eq 0 ]; then E='.'; else E=$(( e )); fi
+	if [ $f -eq 0 ]; then F='.'; else F=$(( f )); fi
+	if [ $g -eq 0 ]; then G='.'; else G=$(( g )); fi
+	if [ $h -eq 0 ]; then H='.'; else H=$(( h )); fi
+	if [ $i -eq 0 ]; then I='.'; else I=$(( i )); fi
+	if [ $j -eq 0 ]; then J='.'; else J=$(( j )); fi
+	if [ $k -eq 0 ]; then K='.'; else K=$(( k )); fi
+	if [ $l -eq 0 ]; then L='.'; else L=$(( l )); fi
+	if [ $m -eq 0 ]; then M='.'; else M=$(( m )); fi
+	if [ $n -eq 0 ]; then N='.'; else N=$(( n )); fi
+	if [ $o -eq 0 ]; then O='.'; else O=$(( o )); fi
+	if [ $p -eq 0 ]; then P='.'; else P=$(( p )); fi
+
+	clear
+	printf -- 'press q to quit, hjkl or wasd to move\n'
+
+	printf -- '.\n'
+	printf -- '.   %4s | %4s | %4s | %4s\n' "$A" "$B" "$C" "$D"
+	printf -- '%s\n' "$horiz"
+	printf -- '.   %4s | %4s | %4s | %4s\n' "$E" "$F" "$G" "$H"
+	printf -- '%s\n' "$horiz"
+	printf -- '.   %4s | %4s | %4s | %4s\n' "$I" "$J" "$K" "$L"
+	printf -- '%s\n' "$horiz"
+	printf -- '.   %4s | %4s | %4s | %4s\n' "$M" "$N" "$O" "$P"
+	printf -- '.\n'
+
+	moves
+	score
+}
+
+#
+# spit out a new random destination tile
+# current contents must be zero to be a valid
+# destination candidate
+#
+get_new_random()
+{
+	local r
+	while :; do
+		r=$(( $RANDOM % 16 ))
+		if ! (( $game_map >> $r & 1 )); then
+			# cell is currently unoccupied
+			break
+		fi
+	done
+	echo $r
+}
+
+game_over()
+{
+
+	printf -- '\n'
+	printf -- 'TYVM BRO\n'
+	printf -- '\n'
+	moves
+	score
+	exit 0
+}
+
+moves()
+{
+	printf -- 'moves: %d\n' "$moves"
+}
+
+score()
+{
+	printf -- 'score: %d\n' "$score"
+}
+
+get_occupier()
+{
+	local funcname=get_occupier
+	local tile occupier
+	tile=$1
+	direction=$2
+	case $direction in
+	left)
+		case $tile in
+		#
+		[aeim]) echo $tile ;;
+		#
+		b)	echo a ;;
+		c)	echo b ;;
+		d)	echo c ;;
+		#
+		f)	echo e ;;
+		g)	echo f ;;
+		h)	echo g ;;
+		#
+		j)	echo i ;;
+		k)	echo j ;;
+		l)	echo k ;;
+		#
+		n)	echo m ;;
+		o)	echo n ;;
+		p)	echo o ;;
+		#
+		*)
+			failed "$funcname(): unknown tile: '$tile'"
+			;;
+		esac
+		;;
+	right)
+		case $tile in
+		#
+		[dhlp])	echo $tile ;;
+		#
+		a)	echo b ;;
+		b)	echo c ;;
+		c)	echo d ;;
+		#
+		e)	echo f ;;
+		f)	echo g ;;
+		g)	echo h ;;
+		#
+		i)	echo j ;;
+		j)	echo k ;;
+		k)	echo l ;;
+		#
+		m)	echo n ;;
+		n)	echo o ;;
+		o)	echo p ;;
+		#
+		*)
+			failed "$funcname(): unknown tile: '$tile'"
+			;;
+		esac
+		;;
+	up)
+		case $tile in
+		#
+		[abcd])	echo $tile ;;
+		#
+		e)	echo a ;;
+		f)	echo b ;;
+		g)	echo c ;;
+		h)	echo d ;;
+		#
+		i)	echo e ;;
+		j)	echo f ;;
+		k)	echo g ;;
+		l)	echo h ;;
+		#
+		m)	echo i ;;
+		n)	echo j ;;
+		o)	echo k ;;
+		p)	echo l ;;
+		#
+		*)
+			failed "$funcname(): unknown tile: '$tile'"
+			;;
+		esac
+		;;
+	down)
+		case $tile in
+		#
+		[mnop])	echo $tile ;;
+		#
+		a)	echo e ;;
+		b)	echo f ;;
+		c)	echo g ;;
+		d)	echo h ;;
+		#
+		e)	echo i ;;
+		f)	echo j ;;
+		g)	echo k ;;
+		h)	echo l ;;
+		#
+		i)	echo m ;;
+		j)	echo n ;;
+		k)	echo o ;;
+		l)	echo p ;;
+		#
+		*)
+			failed "$funcname(): unknown tile: '$tile'"
+			;;
+		esac
+		;;
+	*)
+		failed "$funcname(): unknown direction: '$direction'"
+		;;
+	esac
+
+	return 0
+
+}
+
+printmap()
+{
+	printf -- "MAP: %16s\n" "$(echo "obase=2; $game_map" | bc)"
+}
+
+#
+# cell moves need to be processed in a specific order
+# based on what direction is requested.  if we always
+# process in order from a - p only considering the destination
+# cell, all hell breaks loose because we end up moving
+# a given number multiple times.
+#
+move()
+{
+	local first list r v
+	local direction did_we_move
+
+	while :; do
+
+		# $r is what cell to generate a tile
+		if ! r=$(get_new_random); then
+			game_over
+		fi
+
+		# $v is just to see if we generate a 2 or a 4
+		if ! v=$(( RANDOM % 16 )); then
+			game_over
+		fi
+		
+		# 1/16 chance of being a 4
+		case $v in
+		0)
+			v=2
+			;;
+		*)
+			v=1
+			;;
+		esac
+
+		case $r in
+		0)
+			a=$(( (a ? a : v) << 1 ))
+			game_map=$(flip game a)
+			;;
+		1)
+			b=$(( (b ? b : v) << 1 ))
+			game_map=$(flip game b)
+			;;
+		2)
+			c=$(( (c ? c : v) << 1 ))
+			game_map=$(flip game c)
+			;;
+		3)
+			d=$(( (d ? d : v) << 1 ))
+			game_map=$(flip game d)
+			;;
+		4)
+			e=$(( (e ? e : v) << 1 ))
+			game_map=$(flip game e)
+			;;
+		5)
+			f=$(( (f ? f : v) << 1 ))
+			game_map=$(flip game f)
+			;;
+		6)
+			g=$(( (g ? g : v) << 1 ))
+			game_map=$(flip game g)
+			;;
+		7)
+			h=$(( (h ? h : v) << 1 ))
+			game_map=$(flip game h)
+			;;
+		8)
+			i=$(( (i ? i : v) << 1 ))
+			game_map=$(flip game i)
+			;;
+		9)
+			j=$(( (j ? j : v) << 1 ))
+			game_map=$(flip game j)
+			;;
+		10)
+			k=$(( (k ? k : v) << 1 ))
+			game_map=$(flip game k)
+			;;
+		11)
+			l=$(( (l ? l : v) << 1 ))
+			game_map=$(flip game l)
+			;;
+		12)
+			m=$(( (m ? m : v) << 1 ))
+			game_map=$(flip game m)
+			;;
+		13)
+			n=$(( (n ? n : v) << 1 ))
+			game_map=$(flip game n)
+			;;
+		14)
+			o=$(( (o ? o : v) << 1 ))
+			game_map=$(flip game o)
+			;;
+		15)
+			p=$(( (p ? p : v) << 1 ))
+			game_map=$(flip game p)
+			;;
+		*)
+			exit 1
+			;;
+		esac
+
+		# start with 2 tiles
+		if [ ${first:=1} -eq 1 ]; then
+			a=8
+			b=4
+			c=4
+			d=8
+			e=4
+			f=4
+			g=4
+			h=4
+			i=4
+			j=4
+			k=4
+			l=4
+			m=4
+			n=4
+			o=4
+			p=4
+			
+			game_map=$(flip game a)
+			game_map=$(flip game b)
+			game_map=$(flip game c)
+			game_map=$(flip game d)
+			first=0
+			continue
+		fi
+
+		if ! draw; then
+			failed to draw board
+		fi
+		if [ $game_map -eq $full ]; then
+			game_over
+		fi
+
+		while :; do
+
+			# get desired move
+			did_we_move=0
+			stty -echo
+			read -n1 >/dev/null
+			stty echo
+			case $REPLY in
+			q)
+				game_over
+				;;
+			[ha])
+				direction=left
+				list="
+					a b c d
+					e f g h
+					i j k l
+					m n o p
+				"
+				;;
+			[js])
+				direction=down
+				list="
+					m i e a
+					n j f b
+					o k g c
+					p l h d
+				"
+				;;
+			[kw])
+				direction=up
+				list="
+					a e i m
+					b f j n
+					c g k o
+					d h l p
+				"
+				;;
+			[dl])
+				direction=right
+				list="
+					d c b a
+					h g f e
+					l k j i
+					p o n m
+				"
+				;;
+			*)
+				continue
+				;;
+			esac
+			# '$list' is intentionally unquoted
+			turn_map=0
+			for tile in $list; do
+				case $(( tile )) in
+				0)
+					# tile itself is unoccupied
+					continue
+					;;
+				esac
+				while :; do
+					if ! to=$(get_occupier "$tile" "$direction"); then
+						failed "to get occupier for $tile"
+					fi
+					case $to in
+					$tile)
+						# tile has no occupier, it's on the edge
+						continue 2
+						;;
+					esac
+					if [ $(( to )) -eq 0 ]; then
+						# empty, move into it
+						game_map=$(flip game "$to")
+						game_map=$(flip game "$tile")
+						turn_map=$(flip turn "$to")
+						: $(( $to=tile, $tile=0 ))
+						tile=$to
+						did_we_move=1
+						continue
+					elif [ $(( to )) -eq $(( tile )) ]; then
+						# XXXX $to_bit == eval? if [ $(( turn_map % $to_bit )) ] then fuck.
+						# combine into it
+						game_map=$(flip game "$tile")
+						turn_map=$(flip turn "$to")	
+						: $(( $to=(to + tile), score=(score + to), $tile=0 ))
+						did_we_move=1
+					fi
+					break
+				done
+			done
+			if [ $did_we_move -eq 0 ]; then
+				continue
+			fi
+			break
+		done
+		moves=$(( moves + 1 ))
+	done
+}
+
+case $1 in
+test)
+	runtests
+	exit $?
+	;;
+esac
+
+while :; do
+
+	if ! move; then
+		failed to move
+	fi
+
+done
