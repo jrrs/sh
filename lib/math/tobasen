@@ -16,21 +16,25 @@ esac
 #
 # see 'local usage' for usage.
 #
-# converts integers to output base, writes stdout.
+# converts integers to output base, writes stdout, one per line
 #
 # - 'output base' will be interpreted according to
 #   Arithmetic Subsitution/Expansion (ie ``$(( ... ))'').
 #
-#EXIT STATUS
+# EXIT STATUS
 #
 # 0 - everything is cool
 # 1 - something wasn't
 #
-#CAVEATS
+# CAVEATS
 #
 # valid input bases for the ``n#'' notation are dictated by
 # what the shell supports.  in particular, pdksh supports 2-36,
 # whereas bash supports 2-63.
+#
+# COMPATABILITY
+# - uses arrays and ``n#'' notation, no dash.
+# - '((...))' used instead of '[ ... ]' for perf.
 #
 tobasen()
 {
@@ -40,18 +44,17 @@ tobasen()
 	local default_output_base=10
 	local output_base
 	local ch
-	local _line=""
-	local _number=0
-	local _input="" _output=""
+	local def_base_input=0
 	local _x=0
 
 	OPTIND=1
-	while getopts b ch; do
+	while getopts b: ch; do
 		case $ch in
 		b)
 			output_base=$OPTARG
 			;;
 		*)
+			# XXX warnx()
 			echo "$usage"
 			return 1
 			;;
@@ -62,20 +65,21 @@ tobasen()
 	fi
 	
 	if [ -z "$output_base" ]; then
-		output_base=$default_output_base
-	else
-		output_base=$(( $1 ))
+		output_base=default_output_base
 	fi
+	output_base=$(( output_base )) # math it so we don't have to deal with various chars
 
+	# XXX use isdigit()
 	case $output_base in
 	*[!0-9]*)
+		# XXX warnx()
 		echo "$funcname(): invalid output_base: '$output_base'"
 		return 1
 		;;
 	esac
-
 	
-	if [ $output_base -lt $min ] || [ $output_base -gt $max ]; then
+	if (( output_base < min )) || (( output_base > max )); then
+		# XXX warnx()
 		echo "$funcname(): output_base '$output_base' out of range: '$min - $max'"
 		return 1
 	fi
@@ -83,91 +87,72 @@ tobasen()
 	#
 	# digit character lookup table
 	#
-	local _digit[0]=0
+	local digit[0]=0
 
-	#
-	# do not join this to the local above, this is done
-	# like to to work around the bug in bash 2.01b that
-	# debian-stable continues to use even though it is
-	# A) BUGGY and B) FIVE YEARS OLD
-	#
-	_digit[1]=1 _digit[2]=2 _digit[3]=3 _digit[4]=4 \
-	_digit[5]=5 _digit[6]=6 _digit[7]=7 _digit[8]=8 \
-	_digit[9]=9 _digit[10]=a _digit[11]=b _digit[12]=c \
-	_digit[13]=d _digit[14]=e _digit[15]=f _digit[16]=g \
-	_digit[17]=h _digit[18]=i _digit[19]=j _digit[20]=k \
-	_digit[21]=l _digit[22]=m _digit[23]=n _digit[24]=o \
-	_digit[25]=p _digit[26]=q _digit[27]=r _digit[28]=s \
-	_digit[29]=t _digit[30]=u _digit[31]=v _digit[32]=w \
-	_digit[33]=x _digit[34]=y _digit[35]=z _digit[36]=A \
-	_digit[37]=B _digit[38]=C _digit[39]=D _digit[40]=E \
-	_digit[41]=F _digit[42]=G _digit[43]=H _digit[44]=I \
-	_digit[45]=J _digit[46]=K _digit[47]=L _digit[48]=M \
-	_digit[49]=N _digit[50]=O _digit[51]=P _digit[52]=Q \
-	_digit[53]=R _digit[54]=S _digit[55]=T _digit[56]=U \
-	_digit[57]=V _digit[58]=W _digit[59]=X _digit[60]=Y \
-	_digit[61]=Z _digit[62]=@ _digit[63]=_
+	digit[1]=1 digit[2]=2 digit[3]=3 digit[4]=4 \
+	digit[5]=5 digit[6]=6 digit[7]=7 digit[8]=8 \
+	digit[9]=9 digit[10]=a digit[11]=b digit[12]=c \
+	digit[13]=d digit[14]=e digit[15]=f digit[16]=g \
+	digit[17]=h digit[18]=i digit[19]=j digit[20]=k \
+	digit[21]=l digit[22]=m digit[23]=n digit[24]=o \
+	digit[25]=p digit[26]=q digit[27]=r digit[28]=s \
+	digit[29]=t digit[30]=u digit[31]=v digit[32]=w \
+	digit[33]=x digit[34]=y digit[35]=z digit[36]=A \
+	digit[37]=B digit[38]=C digit[39]=D digit[40]=E \
+	digit[41]=F digit[42]=G digit[43]=H digit[44]=I \
+	digit[45]=J digit[46]=K digit[47]=L digit[48]=M \
+	digit[49]=N digit[50]=O digit[51]=P digit[52]=Q \
+	digit[53]=R digit[54]=S digit[55]=T digit[56]=U \
+	digit[57]=V digit[58]=W digit[59]=X digit[60]=Y \
+	digit[61]=Z digit[62]=@ digit[63]=_
 
-	while read _line; do
-		for _input in $_line; do
+	for input in "$@"; do
+		output=''
 
-			#
-			# make sure the shell handles this type of
-			# input ( eg, ``63#num'' is ok for bash, but
-			# unsupported in pdksh ).
-			#
-			# use a subshell so we can redir the output on error.
-			#
-			if ! (echo $(( $_input ))) >/dev/null 2>&1; then
-				return 1
-			fi
+		#
+		# make sure the shell handles this type of
+		# input ( eg, ``63#num'' is ok for bash, but
+		# unsupported in pdksh ).
+		#
+		if ! (( input )) >/dev/null 2>&1; then
+			# XXX use warnx()
+			return 1
+		fi
 
+		#
+		# convert input into whatever the default base (probably 10)
+		# is for ease of working with it (fewer $((...))
+		# constructs in this code = easier to read),
+		# and also to leave input pristine.
+		#
+		defbase_input=$(( input ))
+		if (( output_base > 1 )); then
+			while :; do
+				if (( defbase_input < output_base )); then
+					output=${digit[defbase_input]}${output}
+					break
+				else
+					output=${digit[defbase_input % output_base]}${output}
+					defbase_input=$(( defbase_input / output_base ))
+					continue
+				fi
+				break
+			done
+		else
 			#
-			# add a space between output numbers if we've
-			# done our first one.
+			# special case for base(1) numbers
+			# because the math that works for
+			# the bigger stuff doesn't work here
 			#
-			if [[ ! -z "${_output}" ]]; then
-				#
-				# clear _output because we need to construct it
-				# piecemeal each time
-				#
-				_output=""
-				echo -n " "
-			fi
+			x=0
+			while (( x < defbase_input )); do
+				output=${digit[output_base]}${_output}
+				x=$(( x + 1 ))
+			done
+		fi
 
-			#
-			# convert _input into a decimal number for
-			# ease of working with it (less $((...))
-			# constructs in this code = easier to read),
-			# and also to leave _input pristine.
-			#
-			_number=$(( _input ))
-			if [[ _base -gt 1 ]]; then
-				while :; do
-					if [[ _number -lt _base ]]; then
-						_output=${_digit[_number]}${_output}
-						break
-					else
-						_output=${_digit[_number % _base]}${_output}
-						let _number/=_base
-					fi
-				done
-			else
-				#
-				# special case for base(1) numbers
-				# because the math that works for
-				# the bigger stuff doesn't work here
-				#
-				_x=0
-				while [[ _x -lt _number ]]; do
-					_output=${_digit[_base]}${_output}
-					let ++_x
-				done
-			fi
-			echo -n $_output
-		done
+		echo "$output"
 	done
-	echo
 }
 
 __script_lib_have_math_tobasen=1
