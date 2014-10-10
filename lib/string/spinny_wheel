@@ -8,9 +8,9 @@ get_jobs()
         #
         # dash(1) `jobs' outputs nothing if stdout is
         # to a pipe, so $jobs
-        # will be '' for dash.  the following will
-        # make it '0', which is actually a bug since
-        # there *may* be jobs and we don't know - 
+        # will be '' for dash.  the following stanza's "cast" will
+        # make it '0', which is actually a failure since
+        # there *may* be jobs and we won't know it.
         #
         if [ -z "$jobs" ]; then
             return 1
