@@ -1,0 +1,111 @@
+get_jobs()
+{
+        local jobs
+        if ! jobs=$(jobs | wc -l); then
+            return 1
+        fi
+
+        #
+        # dash(1) `jobs' outputs nothing if stdout is
+        # to a pipe, so $jobs
+        # will be '' for dash.  the following will
+        # make it '0', which is actually a bug since
+        # there *may* be jobs and we don't know - 
+        #
+        if [ -z "$jobs" ]; then
+            return 1
+        fi
+        
+        #
+        # some UNIX wc(1) has stupid initial spaces
+        # so force a cast to an int.
+        #
+        if ! jobs=$(( jobs )); then
+            return 1
+        fi
+
+        case $jobs in
+        *[!0-9]*)
+            # for some reason still not a number
+            return 1
+            ;;
+        esac
+
+        echo $jobs
+        return 0
+}
+
+spinny_wheel()
+{
+
+    local x=0
+    local sleep="0.25"
+    local jobs
+
+    if ! jobs=$(get_jobs); then
+            return 1
+    fi
+
+    if [ $jobs -eq 0 ]; then
+            # nothing to do
+            return 0
+    fi
+
+    # start with a space so our initial ^Hs don't eat someone else's
+    # existing character
+    echo -n ' '
+
+    while :; do
+
+        if ! jobs=$(jobs | wc -l); then
+            # failed getting count
+            return 1
+        fi
+
+        case $jobs in
+        *[!0-9]*)
+            # not a number
+            return 1
+            ;;
+        esac
+
+        if [ $jobs -eq 0 ]; then
+            # we're done
+            break
+        fi
+
+        case $x in
+        0)
+            echo -n '-'
+            ;;
+        1)
+            echo -n '\'
+            ;;
+        2)
+            echo -n '|'
+            ;;
+        3)
+            echo -n '/'
+            ;;
+        esac
+
+        # hardcode a sleep so we don't PLOW the output buffer,
+        # which would be as bad as outputting a while wall of
+        # verbose output anyway
+        if ! sleep "$sleep"; then
+            return 1
+        fi
+
+        x=$(( x + 1 ))
+        if [ $x -ge 4 ]; then
+            x=0
+        fi
+        continue
+
+        break
+    done
+    
+    # terminal newline so we're not sloppy
+    echo ''
+    return 0
+}
