@@ -1,0 +1,54 @@
+#
+# get me into my current oncall logfile (named for the monday) without me thinking about the day
+#
+# ie: ~/oncall/%Y%m%(day of the month corresponding to the monday of this week)
+#
+oc()
+{
+	local funcname=oc
+	local dir=~/oncall
+	local filename monday today_digit today_epoch
+
+	if [ ! -d "$dir" ]; then
+		if [ -e "$dir" ]; then
+			warnx "$funcname(): dir '$dir' exists and is not a directory"
+			return 1
+		fi
+		if ! mkdir -p -- "$dir"; then
+			warnx "$funcname(): unable to create dir '$dir'"
+			return 1
+		fi
+	fi
+
+	if ! today_digit=$(date +%u); then
+		warnx "$funcname(): failed to get current day number"
+		return 1
+	fi
+
+	if ! isdigit "$today_digit"; then
+		warnx "$funcname(): \$today_digit not a digit: '$today_digit'"
+	fi
+
+	if ! today_epoch=$(date +%s); then
+		warnx "$funcname(): failed to get current day epochsecs"
+		return 1
+	fi
+
+	if ! isdigit "$today_epoch"; then
+		warnx "$funcname(): \$today_epoch not a digit: '$today_epoch'"
+		return 1
+	fi
+
+	if ! monday=$(( $today_epoch - (86400 * ($today_digit - 1)) )); then
+		warnx "$funcname(): failed to math back to monday"
+		return 1
+	fi
+
+	if ! filename=$(date -d @"$monday" +%Y%m%d); then
+		warnx "$funcanme(): failed to determine filename for log"
+		return 1
+	fi
+
+	${VISUAL:-${EDITOR:-vi}} "$dir/$filename"
+	return $?
+}
