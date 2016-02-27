@@ -1,0 +1,145 @@
+#!/bin/sh
+
+set -e
+
+# sudoku is typically 9 identities (numbers) arranged in an
+# ($identities * $identities) field, but can be other sizes
+# too.
+#
+# this is a natural human "starts-at-1" number.
+#
+IDENTITIES=9 
+
+if [ $IDENTITIES -le 0 ]; then
+	# you don't need help solving this one
+	return 0
+fi
+
+# LOGIC:
+# - a solved cell has only one bit set
+# - a completely unsolved cell has all bits set
+# - as identities are eliminated from possibilty, their bits
+#   are removed.
+
+# setup bitmask array '${BIT[@]}' and $ALLONES mask.
+i=0
+while [ $i -lt $IDENTITIES ]; do
+	BIT[i]=$(( 1 << i ))
+	ALLONES=$(( ALLONES | BIT[i] ))
+	i=$(( i + 1 ))
+done
+
+# play board is $IDENTITIES squared, with 1 shaved off for start-at-0-ness
+FIELDS=$(( (IDENTITIES * IDENTITIES) - 1 ))
+i=0
+until [ $i -gt $FIELDS ]; do
+	FIELD[i]=$ALLONES
+	i=$(( i + 1 ))
+done
+
+easy_board()
+{
+	i=0
+	while read line; do
+		for cell in $line; do
+			case $cell in
+			0)
+				cell=$ALLONES
+				;;
+			*)
+				cell=${BIT[cell - 1]}
+				;;
+			esac
+			FIELD[i]=$cell
+			i=$(( i + 1 ))
+		done
+	done < ~/sudoku-board
+}
+
+# need to make four access methods for traversing board:
+# - individual cell
+# - row
+# - column
+# - block
+
+# get(cell, method)
+# methods:
+# null || 0 - individual cell
+# 1 - row
+# 2 - column
+# 3 - block
+#
+get()
+{
+	local cell method
+	local row column block
+	local i
+
+	cell=$1
+	method=$2
+	
+	if [ -z "$cell" ]; then
+		return 1
+	fi
+	if [ "$cell" -gt "$FIELDS" ]; then
+		echo "ur dum"
+		return 1
+	fi
+
+	row=$(( cell / IDENTITIES ))
+	column=$(( cell % IDENTITIES ))
+
+	case $method in
+	0 | "")
+		echo "${FIELD[cell]}"
+		return 0
+		;;
+	1)
+		cell=$(( row * IDENTITIES )) # starting cell of the row
+		i=0
+		while [ "$i" -lt "$IDENTITIES" ]; do
+			echo "${FIELD[cell + i]}"
+			i=$(( i + 1 ))
+		done
+		;;
+	2)
+		cell=$(( column )) 
+		i=0
+		while [ "$i" -lt "$IDENTITIES" ]; do
+			echo "${FIELD[cell + i * IDENTITIES]}"	
+			i=$(( i + 1 ))
+		done
+		;;
+	3)
+		;;
+	*)
+		echo "invalid type: '$type'"
+		return 1
+		;;
+	esac
+	return 0
+	
+}
+
+draw()
+{
+	:
+}
+
+
+easy_board
+get 9 2
+
+exit 0
+a=$(get 0 2)
+b=$(get 8 2)
+echo $a
+echo $b
+case $a in
+$b)
+	;;
+*)
+	echo should have been equal
+	exit 1
+	;;
+esac
