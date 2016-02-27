@@ -18,7 +18,7 @@ fi
 # LOGIC:
 # - a solved cell has only one bit set
 # - a completely unsolved cell has all bits set
-# - as identities are eliminated from possibilty, their bits
+# - as identities are eliminated from possibility, their bits
 #   are removed.
 
 # setup bitmask array '${BIT[@]}' and $ALLONES mask.
