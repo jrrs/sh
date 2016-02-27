@@ -53,7 +53,7 @@ easy_board()
 			FIELD[i]=$cell
 			i=$(( i + 1 ))
 		done
-	done < ~/sudoku-board
+	done < sudoku-board
 }
 
 # need to make four access methods for traversing board:
