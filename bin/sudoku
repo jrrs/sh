@@ -6,13 +6,19 @@ set -e
 # ($identities * $identities) field, but can be other sizes
 # too.
 #
-# this is a natural human "starts-at-1" number.
+# sudoku grids supported must be a square with L*W == $IDENTITIES,
+# furthermore, it must be divisible into $IDENTITIES blocks
+# of $IDENTITIES cells.
 #
-IDENTITIES=9 
+# in other words, the square of an integer, $SIDE_SIZE.
+#
+SIDE_SIZE=3
+IDENTITIES=$((SIDE_SIZE * SIDE_SIZE))
 
-if [ $IDENTITIES -le 0 ]; then
+if [ "$SIDE_SIZE" -le 0 ]; then
 	# you don't need help solving this one
-	return 0
+	echo "square with \$SIDE_SIZE: '$SIDE_SIZE' too small."
+	exit 1 
 fi
 
 # LOGIC:
@@ -23,7 +29,7 @@ fi
 
 # setup bitmask array '${BIT[@]}' and $ALLONES mask.
 i=0
-while [ $i -lt $IDENTITIES ]; do
+while [ "$i" -lt "$IDENTITIES" ]; do
 	BIT[i]=$(( 1 << i ))
 	ALLONES=$(( ALLONES | BIT[i] ))
 	i=$(( i + 1 ))
@@ -32,7 +38,7 @@ done
 # play board is $IDENTITIES squared, with 1 shaved off for start-at-0-ness
 FIELDS=$(( (IDENTITIES * IDENTITIES) - 1 ))
 i=0
-until [ $i -gt $FIELDS ]; do
+until [ "$i" -gt "$FIELDS" ]; do
 	FIELD[i]=$ALLONES
 	i=$(( i + 1 ))
 done
@@ -62,63 +68,89 @@ easy_board()
 # - column
 # - block
 
-# get(cell, method)
-# methods:
-# null || 0 - individual cell
-# 1 - row
-# 2 - column
-# 3 - block
-#
-get()
+get_row()
 {
-	local cell method
-	local row column block
-	local i
+	local id=$1
+	check "$id"
+	echo $(( id / IDENTITIES ))
+}
 
-	cell=$1
-	method=$2
+get_column()
+{
+	local id=$1
+	check "$id"
+	echo $(( id % IDENTITIES ))
+}
+
+get_block()
+{
+	local id=$1
+	check "$id"
+	# this feels cumbersome but it works >___<
+	echo $(( id / SIDE_SIZE % SIDE_SIZE + id / SIDE_SIZE / IDENTITIES * SIDE_SIZE ))
+}
+
+check()
+{
+	local id=$1
+	if [ "$id" -gt "$FIELDS" ] || [ "$id" -lt 0 ]; then
+		echo "bad id: '$id', $FIELDS"
+		exit 1
+	fi
+	return 0
+}
+
+get_cells()
+{
+	local id=$1 type=$2
+	local i=0 j=0 x
 	
-	if [ -z "$cell" ]; then
-		return 1
-	fi
-	if [ "$cell" -gt "$FIELDS" ]; then
-		echo "ur dum"
-		return 1
-	fi
+	check "$id"
 
-	row=$(( cell / IDENTITIES ))
-	column=$(( cell % IDENTITIES ))
-
-	case $method in
-	0 | "")
-		echo "${FIELD[cell]}"
-		return 0
+	case $type in
+	0)
+		# row
+		x=$(get_row "$id")
+		x=$((x * $IDENTITIES)) # first cell in row
+		while [ "$i" -lt "$IDENTITIES" ]; do
+			echo $(( x + i ))
+			i=$(( i + 1 ))
+		
+		done
 		;;
 	1)
-		cell=$(( row * IDENTITIES )) # starting cell of the row
-		i=0
+		# column
+		x=$(get_column "$id")
+		# by definition, first cell in column == column id
 		while [ "$i" -lt "$IDENTITIES" ]; do
-			echo "${FIELD[cell + i]}"
+			echo $(( x + i * $IDENTITIES ))
 			i=$(( i + 1 ))
 		done
 		;;
 	2)
-		cell=$(( column )) 
-		i=0
-		while [ "$i" -lt "$IDENTITIES" ]; do
-			echo "${FIELD[cell + i * IDENTITIES]}"	
+		# block
+		x=$(get_block "$id")
+	
+		# first cell in block
+		x=$(( x / SIDE_SIZE * SIDE_SIZE * IDENTITIES + x % SIDE_SIZE * SIDE_SIZE ))
+
+		# 'x / SIDE_SIZE' - block-offset, row-wise
+		# 'x % SIDE_SIZE' - block-offset, column-wise
+		# 'bo.r * SIDE_SIZE * IDENTITIES' - offset to yield cellId of left-most block's
+		#   first cell
+		# 'bo.c' - amount to add to left-most first cell to get first cell of habitated
+		#   block
+		while [ "$i" -lt "$SIDE_SIZE" ]; do
+			j=0
+			while [ "$j" -lt "$SIDE_SIZE" ]; do
+				echo $(( x + i * IDENTITIES + j ))
+				j=$(( j + 1 ))
+			done
 			i=$(( i + 1 ))
 		done
-		;;
-	3)
-		;;
-	*)
-		echo "invalid type: '$type'"
-		return 1
+
 		;;
 	esac
-	return 0
-	
 }
 
 draw()
@@ -128,18 +160,4 @@ draw()
 
 
 easy_board
-get 9 2
-
-exit 0
-a=$(get 0 2)
-b=$(get 8 2)
-echo $a
-echo $b
-case $a in
-$b)
-	;;
-*)
-	echo should have been equal
-	exit 1
-	;;
-esac
+get_cells 80 2
