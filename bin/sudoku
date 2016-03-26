@@ -16,7 +16,6 @@ SIDE_SIZE=3
 IDENTITIES=$((SIDE_SIZE * SIDE_SIZE))
 
 if [ "$SIDE_SIZE" -le 0 ]; then
-	# you don't need help solving this one
 	echo "square with \$SIDE_SIZE: '$SIDE_SIZE' too small."
 	exit 1 
 fi
@@ -31,6 +30,8 @@ fi
 i=0
 while [ "$i" -lt "$IDENTITIES" ]; do
 	BIT[i]=$(( 1 << i ))
+	DIGIT[BIT[i]]=$i # 
+	NUMERAL[i]=$(( i + 1 )) # start at 1 instead of 0
 	ALLONES=$(( ALLONES | BIT[i] ))
 	i=$(( i + 1 ))
 done
@@ -131,15 +132,16 @@ get_cells()
 		# block
 		x=$(get_block "$id")
 	
-		# first cell in block
 		x=$(( x / SIDE_SIZE * SIDE_SIZE * IDENTITIES + x % SIDE_SIZE * SIDE_SIZE ))
-
+		# ^^: first cell in block.  so....
+		# 
 		# 'x / SIDE_SIZE' - block-offset, row-wise
 		# 'x % SIDE_SIZE' - block-offset, column-wise
 		# 'bo.r * SIDE_SIZE * IDENTITIES' - offset to yield cellId of left-most block's
 		#   first cell
 		# 'bo.c' - amount to add to left-most first cell to get first cell of habitated
 		#   block
+		#
 		while [ "$i" -lt "$SIDE_SIZE" ]; do
 			j=0
 			while [ "$j" -lt "$SIDE_SIZE" ]; do
@@ -148,16 +150,35 @@ get_cells()
 			done
 			i=$(( i + 1 ))
 		done
-
 		;;
 	esac
 }
 
 draw()
 {
-	:
+	local i=0 j=0 k=0
+	local width=${#FIELDS} # character width
+
+	while [ "$i" -le "$FIELDS" ]; do
+		j=0
+		while [ "$j" -lt "$IDENTITIES" ]; do
+			printf "[%${width}s]" "${DIGIT[FIELD[j+i]]}"
+			j=$(( j + 1 ))
+			
+			if ! (( j % IDENTITIES )); then echo; continue; fi # line break
+			if (( j % SIDE_SIZE )); then echo -n " "; fi
+		done
+		#echo -n " "
+		if (( i % SIDE_SIZE )); then echo; fi
+		i=$(( i + SIDE_SIZE ))
+	done
 }
 
 
 easy_board
-get_cells 80 2
+#get_cells 80 2
+draw
+#echo "${NUMERAL[@]}"
+#set | grep NUM
+#set | grep BIT
+##set | grep DIG
