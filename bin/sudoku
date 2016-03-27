@@ -10,7 +10,9 @@ set -e
 # furthermore, it must be divisible into $IDENTITIES blocks
 # of $IDENTITIES cells.
 #
-# in other words, the square of an integer, $SIDE_SIZE.
+# in other words, the square of an integer: $SIDE_SIZE.
+#
+# XXX: "SIDE_SIZE" might be a misleading name?
 #
 SIDE_SIZE=3
 IDENTITIES=$((SIDE_SIZE * SIDE_SIZE))
@@ -20,18 +22,24 @@ if [ "$SIDE_SIZE" -le 0 ]; then
 	exit 1 
 fi
 
+#
 # LOGIC:
 # - a solved cell has only one bit set
 # - a completely unsolved cell has all bits set
 # - as identities are eliminated from possibility, their bits
 #   are removed.
-
-# setup bitmask array '${BIT[@]}' and $ALLONES mask.
+#
+# setup arrays and $ALLONES:
+# - $BIT[]: LHS increments monotonically and RHS
+#	    is the value of an integer with only the LHS'th bit set
+# - $DIGIT[]: the inverse of $BIT[], helpful for friendly output
+# - $ALLONES: RHS is the value of an integer with $IDENTITIES bits
+#	      set
+#
 i=0
 while [ "$i" -lt "$IDENTITIES" ]; do
 	BIT[i]=$(( 1 << i ))
-	DIGIT[BIT[i]]=$i # 
-	NUMERAL[i]=$(( i + 1 )) # start at 1 instead of 0
+	DIGIT[BIT[i]]=$i
 	ALLONES=$(( ALLONES | BIT[i] ))
 	i=$(( i + 1 ))
 done
@@ -44,6 +52,8 @@ until [ "$i" -gt "$FIELDS" ]; do
 	i=$(( i + 1 ))
 done
 
+# ingest a sample board data: space-separated list of values for individual
+# cells.  '0' means unknown.  linefeeds optional.
 easy_board()
 {
 	i=0
@@ -68,6 +78,13 @@ easy_board()
 # - row
 # - column
 # - block
+
+get_cell()
+{
+	local id=$1
+	check "$id"
+	echo "${FIELDS[id]}"
+}
 
 get_row()
 {
@@ -156,29 +173,33 @@ get_cells()
 
 draw()
 {
-	local i=0 j=0 k=0
+	local i=0 column=0 k=0 row=1
 	local width=${#FIELDS} # character width
 
 	while [ "$i" -le "$FIELDS" ]; do
-		j=0
-		while [ "$j" -lt "$IDENTITIES" ]; do
-			printf "[%${width}s]" "${DIGIT[FIELD[j+i]]}"
-			j=$(( j + 1 ))
+		column=0
+		while [ "$column" -lt "$IDENTITIES" ]; do
+			printf "[%${width}s]" "${DIGIT[FIELD[column+i] << 1]}"
+			column=$(( column + 1 ))
 			
-			if ! (( j % IDENTITIES )); then echo; continue; fi # line break
-			if (( j % SIDE_SIZE )); then printf " "; fi
+			if ! (( column % IDENTITIES )); then echo; continue; fi # line break after last column
+			if (( column % SIDE_SIZE )); then
+				printf " " # interstitial single space
+			else
+				printf "   " interstitial 3x space between Blocks
+			fi
 		done
-		#printf " "
-		if (( i % SIDE_SIZE )); then echo; fi
-		i=$(( i + SIDE_SIZE ))
+		if (( !(row % SIDE_SIZE) )); then
+			# this whole 'row' thing is a hack
+			# just to get a pretty extra space
+			# so as to illustrate block groupings
+			echo 
+		fi
+		i=$(( i + IDENTITIES ))
+		row=$(( row + 1 ))
 	done
 }
 
 
 easy_board
-#get_cells 80 2
 draw
-#echo "${NUMERAL[@]}"
-#set | grep NUM
-#set | grep BIT
-##set | grep DIG
