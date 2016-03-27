@@ -156,29 +156,33 @@ get_cells()
 
 draw()
 {
-	local i=0 j=0 k=0
+	local i=0 column=0 k=0 row=1
 	local width=${#FIELDS} # character width
 
 	while [ "$i" -le "$FIELDS" ]; do
-		j=0
-		while [ "$j" -lt "$IDENTITIES" ]; do
-			printf "[%${width}s]" "${DIGIT[FIELD[j+i]]}"
-			j=$(( j + 1 ))
+		column=0
+		while [ "$column" -lt "$IDENTITIES" ]; do
+			printf "[%${width}s]" "${DIGIT[FIELD[column+i] << 1]}"
+			column=$(( column + 1 ))
 			
-			if ! (( j % IDENTITIES )); then echo; continue; fi # line break
-			if (( j % SIDE_SIZE )); then printf " "; fi
+			if ! (( column % IDENTITIES )); then echo; continue; fi # line break after last column
+			if (( column % SIDE_SIZE )); then
+				printf " " # interstitial single space
+			else
+				printf "   " interstitial 3x space between Blocks
+			fi
 		done
-		#printf " "
-		if (( i % SIDE_SIZE )); then echo; fi
-		i=$(( i + SIDE_SIZE ))
+		if (( !(row % SIDE_SIZE) )); then
+			# this whole 'row' thing is a hack
+			# just to get a pretty extra space
+			# so as to illustrate block groupings
+			echo 
+		fi
+		i=$(( i + IDENTITIES ))
+		row=$(( row + 1 ))
 	done
 }
 
 
 easy_board
-#get_cells 80 2
 draw
-#echo "${NUMERAL[@]}"
-#set | grep NUM
-#set | grep BIT
-##set | grep DIG
