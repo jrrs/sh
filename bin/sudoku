@@ -22,17 +22,6 @@ if [ "$SIDE_SIZE" -le 0 ]; then
 	exit 1 
 fi
 
-SAMPLE_BOARD="
-	0 6 0 0 1 0 0 0 2
-	0 4 0 6 2 0 7 0 0
-	0 0 0 3 0 7 0 8 0
-	0 2 0 0 4 0 9 0 0
-	0 0 1 0 0 0 2 0 0
-	0 0 3 0 8 0 0 5 0
-	0 9 0 8 0 4 0 0 0
-	0 0 4 0 3 2 0 9 0
-	2 0 0 0 7 0 0 4 0
-"
 #
 # LOGIC:
 # - a solved cell has only one bit set
@@ -68,18 +57,20 @@ done
 easy_board()
 {
 	i=0
-	for cell in $SAMPLE_BOARD; do
-		case $cell in
-		0)
-			cell=$ALLONES
-			;;
-		*)
-			cell=${BIT[cell - 1]}
-			;;
-		esac
-		FIELD[i]=$cell
-		i=$(( i + 1 ))
-	done
+	while read line; do
+		for cell in $line; do
+			case $cell in
+			0)
+				cell=$ALLONES
+				;;
+			*)
+				cell=${BIT[cell - 1]}
+				;;
+			esac
+			FIELD[i]=$cell
+			i=$(( i + 1 ))
+		done
+	done < sudoku-board
 }
 
 # need to make four access methods for traversing board:
@@ -178,6 +169,29 @@ get_cells()
 		done
 		;;
 	esac
+}
+
+# stolen from popcount_4() - https://en.wikipedia.org/wiki/Hamming_weight, thanks
+# to https://github.com/jeffmahoney for the tip
+popcount()
+{
+	local count=0
+	local var=$1
+	if [ -z "$var" ]; then
+		return 1
+	fi
+	case $var in
+	*[!0-9]*)
+		return 1
+		;;
+	esac
+
+	while [ $count -lt $var ]; do
+        	let "var &= var - 1"
+        	i=$(( i + 1 ))
+	done
+	echo "$count"
+	return 0
 }
 
 draw()
