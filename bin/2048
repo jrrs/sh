@@ -10,6 +10,10 @@ progname=${##0}
 # - would be nice to not have so many nested loops
 # - need to test movement in each direction to correctly spot gameover
 # - '8 4 4 8' when moved right should be '. 8 8 8', but it's turning into '. . 16 8'
+#   -- i think this is because i'm stepping through cells and doing combinations
+#      at the same time i'm putting new values in cells.  need to make this atomic.
+# - the 'endgame' test is not good -- the game should end when no moves can be made,
+#      not simply when all tiles are populated
 #
 
 # just in case we don't turn this back on, be polite
