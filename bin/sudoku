@@ -86,21 +86,21 @@ get_cell()
 	echo "${FIELDS[id]}"
 }
 
-get_row()
+get_row_id()
 {
 	local id=$1
 	check "$id"
 	echo $(( id / IDENTITIES ))
 }
 
-get_column()
+get_column_id()
 {
 	local id=$1
 	check "$id"
 	echo $(( id % IDENTITIES ))
 }
 
-get_block()
+get_block_id()
 {
 	local id=$1
 	check "$id"
@@ -128,7 +128,7 @@ get_cells()
 	case $type in
 	0)
 		# row
-		x=$(get_row "$id")
+		x=$(get_row_id "$id")
 		x=$((x * $IDENTITIES)) # first cell in row
 		while [ "$i" -lt "$IDENTITIES" ]; do
 			echo $(( x + i ))
@@ -138,7 +138,7 @@ get_cells()
 		;;
 	1)
 		# column
-		x=$(get_column "$id")
+		x=$(get_column_id "$id")
 		# by definition, first cell in column == column id
 		while [ "$i" -lt "$IDENTITIES" ]; do
 			echo $(( x + i * $IDENTITIES ))
@@ -147,7 +147,7 @@ get_cells()
 		;;
 	2)
 		# block
-		x=$(get_block "$id")
+		x=$(get_block_id "$id")
 	
 		x=$(( x / SIDE_SIZE * SIDE_SIZE * IDENTITIES + x % SIDE_SIZE * SIDE_SIZE ))
 		# ^^: first cell in block.  so....
