@@ -22,6 +22,18 @@ if [ "$SIDE_SIZE" -le 0 ]; then
 	exit 1 
 fi
 
+SAMPLE_BOARD="
+	0 6 0 0 1 0 0 0 2
+	0 4 0 6 2 0 7 0 0
+	0 0 0 3 0 7 0 8 0
+	0 2 0 0 4 0 9 0 0
+	0 0 1 0 0 0 2 0 0
+	0 0 3 0 8 0 0 5 0
+	0 9 0 8 0 4 0 0 0
+	0 0 4 0 3 2 0 9 0
+	2 0 0 0 7 0 0 4 0
+"
+
 #
 # LOGIC:
 # - a solved cell has only one bit set
@@ -56,21 +68,19 @@ done
 # cells.  '0' means unknown.  linefeeds optional.
 easy_board()
 {
-	i=0
-	while read line; do
-		for cell in $line; do
-			case $cell in
-			0)
-				cell=$ALLONES
-				;;
-			*)
-				cell=${BIT[cell - 1]}
-				;;
-			esac
-			FIELD[i]=$cell
-			i=$(( i + 1 ))
-		done
-	done < sudoku-board
+	local i=0
+	for cell in $SAMPLE_BOARD; do
+		case $cell in
+		0)
+			cell=$ALLONES
+			;;
+		*)
+			cell=${BIT[cell - 1]}
+			;;
+		esac
+		FIELD[i]=$cell
+		i=$(( i + 1 ))
+	done
 }
 
 # need to make four access methods for traversing board:
@@ -84,6 +94,34 @@ get_cell()
 	local id=$1
 	check "$id"
 	echo "${FIELDS[id]}"
+}
+
+# retrieve the contents of the given row based on id
+get_row()
+{
+	local id=$1 i=0
+	if [ $id -gt $IDENTITIES ]; then
+		return 1
+	fi
+	while [ $i -lt $IDENTITIES ]; do
+		echo "${FIELD[id * IDENTITIES + i]}"
+		i=$(( i + 1 ))
+	done
+	return 0
+}
+
+get_column()
+{
+	local id=$1 i=0
+	if [ $id -gt $IDENTITIES ]; then
+		return 1
+	fi
+	while [ $i -lt $IDENTITIES ]; do
+		echo "${FIELD[id]}"
+		id=$(( id + IDENTITIES ))
+		i=$(( i + 1 ))
+	done
+	return 0
 }
 
 get_row_id()
@@ -226,3 +264,4 @@ draw()
 
 easy_board
 draw
+get_column 10
