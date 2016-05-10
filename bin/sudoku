@@ -159,31 +159,44 @@ check()
 get_cells()
 {
 	local id=$1 type=$2
-	local i=0 j=0 x
+	local i=0 j=0 c x
 	
 	check "$id"
 
-	case $type in
-	0)
-		# row
+	case $(echo $type | tr '[:upper:]' '[:lower:]') in
+	0 | row)
 		x=$(get_row_id "$id")
 		x=$((x * $IDENTITIES)) # first cell in row
 		while [ "$i" -lt "$IDENTITIES" ]; do
-			echo $(( x + i ))
+			c=$(( x + i ))
+			case $c in
+			$id)
+				;;
+			*)
+				echo $c
+				;;
+			esac
 			i=$(( i + 1 ))
 		
 		done
 		;;
-	1)
+	1 | column)
 		# column
 		x=$(get_column_id "$id")
 		# by definition, first cell in column == column id
 		while [ "$i" -lt "$IDENTITIES" ]; do
-			echo $(( x + i * $IDENTITIES ))
+			c=$(( x + i * IDENTITIES ))
+			case $c in
+			$id)
+				;;
+			*)
+				echo $c
+				;;
+			esac
 			i=$(( i + 1 ))
 		done
 		;;
-	2)
+	2 | block)
 		# block
 		x=$(get_block_id "$id")
 	
@@ -200,11 +213,22 @@ get_cells()
 		while [ "$i" -lt "$SIDE_SIZE" ]; do
 			j=0
 			while [ "$j" -lt "$SIDE_SIZE" ]; do
-				echo $(( x + i * IDENTITIES + j ))
+				c=$(( x + i * IDENTITIES + j ))
+				case $c in
+				$id)
+					;;
+				*)
+					echo $c
+					;;
+				esac
 				j=$(( j + 1 ))
 			done
 			i=$(( i + 1 ))
 		done
+		;;
+	*)
+		echo "unknown type of cell grouping requested: '$type'"
+		return 1
 		;;
 	esac
 }
@@ -225,8 +249,8 @@ popcount()
 	esac
 
 	while [ $count -lt $var ]; do
-        	let "var &= var - 1"
-        	i=$(( i + 1 ))
+        	let "var &= var - 1" || true
+        	count=$(( count + 1 ))
 	done
 	echo "$count"
 	return 0
@@ -237,10 +261,19 @@ draw()
 	local i=0 column=0 k=0 row=1
 	local width=${#FIELDS} # character width
 
+	local raw=$1
+		
 	while [ "$i" -le "$FIELDS" ]; do
 		column=0
 		while [ "$column" -lt "$IDENTITIES" ]; do
-			printf "[%${width}s]" "${DIGIT[FIELD[column+i] << 1]}"
+			case $raw in
+			'')
+				printf "[%${width}s]" "${DIGIT[FIELD[column+i] << 1]}"
+				;;
+			*)
+				printf "[%3s]" "${FIELD[column+i]}"
+				;;
+			esac
 			column=$(( column + 1 ))
 			
 			if ! (( column % IDENTITIES )); then echo; continue; fi # line break after last column
@@ -263,5 +296,47 @@ draw()
 
 
 easy_board
-draw
-get_column 10
+draw 
+
+echo ===
+
+# investigate column, row, block.
+cell=0
+iterations=1
+changes=1
+while [ $changes -gt 0 ]; do
+	changes=0
+	while [ $cell -le $FIELDS ]; do
+		# first pass, we look at every cell who has a popcount of 1,
+		# and remove that value from all other cells in each of its
+		# various groups (row/column/block)
+		while :; do
+			popcount=$(popcount "${FIELD[cell]}")
+			if [ "$popcount" -ne 1 ]; then
+				# move along
+				break
+			fi
+			for t in row column block; do
+			
+				for neighbor in $(get_cells $cell $t); do
+					if (( (FIELD[neighbor] - FIELD[cell]) == (FIELD[neighbor] ^ FIELD[cell]) )); then
+						# FIELD[cell] is set in FIELD[neighbor]
+						let "FIELD[neighbor] ^= FIELD[cell]"
+						changes=$(( changes + 1 ))
+					fi
+				done
+				
+			done
+			break
+		done
+		cell=$(( $cell + 1 ))
+	done
+	iterations=$(( iterations + 1 ))
+	echo ===
+	draw x
+	
+done
+
+	echo ===
+draw x
+echo $iterations
