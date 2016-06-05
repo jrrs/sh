@@ -167,6 +167,7 @@ IPC_KILL()
 	local funcname=IPC_KILL
 	local usage="$funcname(): usage: $funcname"
 	local k s dir
+	local child
 	if [ -z "$IPC_PENDING_DIR" ]; then
 		warnx "$funcname(): \$IPC_PENDING_DIR null"
 		return 1
@@ -176,8 +177,8 @@ IPC_KILL()
 	else
 		while :; do
 			s=0
-			for c in "$IPC_PENDING_DIR/"*; do
-				case $c in
+			for child in "$IPC_PENDING_DIR/"*; do
+				case $child in
 				*"*")
 					debug 2 "$funcname(): found an *"
 					continue
@@ -187,17 +188,17 @@ IPC_KILL()
 
 				# chop off leading child depth markers
 				while :; do
-					case $c in
+					case $child in
 					_*)
-						c=${c##*_}
-						debug 2 "$funcname(): chopped _ off $c"
+						child=${child##*_}
+						debug 2 "$funcname(): chopped _ off \$child: '$child'
 						continue
 						;;
 					esac
 					break
 				done
 
-				case $c in
+				case $child in
 				$IPC_MASTER)
 					warnx "$funcname(): \$IPC_MASTER seen in \$IPC_PENDING_DIR, skipping"
 					continue
@@ -206,10 +207,10 @@ IPC_KILL()
 
 				case ${#k} in
 				0)
-					k=$c
+					k=$child
 					;;
 				*)
-					k="$c $k"
+					k="$child $k"
 					;;
 				esac
 				debug 2 "$funcname(): \$k: '$k'"
@@ -232,15 +233,15 @@ IPC_KILL()
 	else
 		while :; do
 			s=0
-			for c in "$IPC_RUNNING_DIR/"*; do
-				case $c in
+			for child in "$IPC_RUNNING_DIR/"*; do
+				case $child in
 				*"*")
 					continue
 					;;
 				esac
-				c=${c##*/}
+				child=${child##*/}
 
-				case $c in
+				case $child in
 				$IPC_MASTER)
 					warnx "$funcname(): \$IPC_MASTER seen in \$IPC_RUNNING_DIR, skipping"
 					continue
@@ -249,10 +250,10 @@ IPC_KILL()
 
 				case ${#k} in
 				0)
-					k=$c
+					k=$child
 					;;
 				*)
-					k="$c $k"
+					k="$child $k"
 					;;
 				esac
 				s=$(( $s + 1 ))
