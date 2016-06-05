@@ -1,0 +1,691 @@
+# $Id: err 34212 2011-10-24 13:56:40Z jwm $
+
+case $__isis_script_lib_have_string_err in
+1)
+	return 0
+	;;
+esac
+
+case $ISIS_SCRIPT_LIB_ROOT in
+"")
+	_libroot=/usr/share/scriptlib
+	;;
+*)
+	_libroot=$ISIS_SCRIPT_LIB_ROOT
+	;;
+esac
+
+#
+# NOTE: for all these functions, there can be a significant
+# performance hit (~one order of magnitude) under high
+# iteration count if $progname is not already set.
+#
+
+#
+# debug verbose_threshold message [...]
+#
+# verbose_threshold is printed out with the message.
+#
+# global vars:
+# progname - if $progname is null, debug()
+# 	invokes progname() to try to determine
+#	the name of the program.
+# verbose - digit.  if $verbose is null
+#	or not a digit, debug() just null commands "$progname $@".
+#	if $verbose is less than $verbose_threshold,
+#	message is not printed, otherwise if /dev/stderr
+#	is writable, $message is echoed there, otherwise
+#	to stdout.
+debug()
+{
+	local funcname=debug
+	local v=$1 # verbose_threshold
+
+	case $progname in
+	"")
+		local progname=$(progname)
+		;;
+	esac
+
+	if [ -z "$verbose" ]; then
+		: "$progname $@"
+		return 0
+	fi
+	if ! _isdigit "$verbose" || ! _isdigit "$v"; then
+		# if either of them is not a digit, null command
+		# and bail
+		: "$progname: $funcname(): non-digit \$verbose or \$v.  input: $@"
+		return 0
+	fi
+
+	if [ $verbose -lt $v ]; then
+		: "$progname $@"
+		return 0
+	fi
+
+	echo 1>&2 "$progname: $@"
+}
+
+#
+# err retval [message]
+# errx retval message
+#
+# message is printed and script is exited with retval
+#
+# this differs slightly from libc err(3).  in libc the
+# 'retval' is what the exit/return code of the function is, where
+# the symbolic name of the error is defined by the value of the
+# global 'errno'.  because there's no usual 'errno' paradigm in
+# shell and it is more intuitive to just have retval be both
+# the exit/return code and the source of the symbolic text for the
+# message.
+#
+# NOTE: if the caller invokes a subshell for the function in which
+# err()/errx() is called, there is no easy and clean way to topple the
+# caller's context (eg, err/errx in a function invoked with 
+# 'if joe=$(function);...; fi' will cause an exit of the subshell
+# used for command substitition, but not implicitly cause the calling
+# shell to exit.
+#
+err()
+{
+	if [ $# -lt 1 ]; then
+		return 1
+	fi
+	local retval=$1
+	shift
+	if [ -z "$progname" ]; then
+		local progname=$(progname)
+	fi
+
+	case $retval in
+	*[!0-9]* | "")
+		retval=$(geterrnum "$retval")
+		;;
+	esac
+
+	warn "$retval" "$@"
+
+	exit $retval
+
+}
+
+errx()
+{
+	if [ $# -lt 1 ]; then
+		return 1
+	fi
+	local retval=$1
+	shift
+	if [ -z "$progname" ]; then
+		local progname=$(progname)
+	fi
+
+	case $retval in
+	*[!0-9]* | "")
+		retval=$(geterrnum "$retval")
+		;;
+	esac
+
+	warnx "$@"
+
+	exit $retval
+
+}
+
+#
+# warn code string
+#
+# this differs from slightly as well.  libc warn does not take
+# an integer arg to define what the string error will be again
+# because of the global errno.  in this function, 'code' is either
+# an int or a uppercase ERR name
+#
+warn()
+{
+	if [ $# -lt 1 ]; then
+		return 1
+	fi
+	local retval=$1
+	shift
+	if [ -z "$progname" ]; then
+		local progname=$(progname)
+	fi
+
+	local string=$(strerror "$retval")
+
+	if [ $# -eq 0 ] || [ -z "$*" ]; then
+		echo 1>&2 "$progname: $string" 
+	else
+		echo 1>&2 "$progname: $@: $string"
+	fi
+
+	return 0
+
+}
+
+warnx()
+{
+
+	if [ -z "$progname" ]; then
+		local progname=$(progname)
+	fi
+
+	echo 1>&2 "$progname: $@"
+
+	return 0
+
+}
+
+#
+# strerror errnum 
+#
+# maps errnum to an informational string and echos it back
+# errnum can be numeric or uppercase string
+#
+# many of these are going to be suboptimal or irrelevant in
+# the context of the shell.
+#
+strerror()
+{
+	case $1 in
+
+	1 | EPERM)
+		echo "Operation not permitted"
+		;;
+
+	2 | ENOENT)
+		echo "No such file or directory"
+		;;
+
+	3 | ESRCH)
+		echo "No such process"
+		;;
+
+	4 | EINTR)
+		echo "Interrupted function call"
+		;;
+
+	5 | EIO)
+		echo "Input/output error"
+		;;
+
+	6 | ENXIO)
+		echo "No such device or address"
+		;;
+
+	7 | E2BIG)
+		echo "Arg list too long"
+		;;
+
+	8 | ENOEXEC)
+		echo "Exec format error"
+		;;
+
+	9 | EBADF)
+		echo "Bad file descriptor"
+		;;
+
+	10 | ECHILD)
+		echo "No child processes"
+		;;
+
+	11 | EDEADLK)
+		echo "Resource deadlock avoided"
+		;;
+
+	12 | ENOMEM)
+		echo "Cannot allocate memory"
+		;;
+
+	13 | EACCES)
+		echo "Permission denied"
+		;;
+
+	14 | EFAULT)
+		echo "Bad address"
+		;;
+
+	15 | ENOTBLK)
+		echo "Not a block device"
+		;;
+
+	16 | EBUSY)
+		echo "Device busy"
+		;;
+
+	17 | EEXIST)
+		echo "File exists"
+		;;
+
+	18 | EXDEV)
+		echo "Improper link"
+		;;
+
+	19 | ENODEV)
+		echo "Operation not supported by device"
+		;;
+
+	20 | ENOTDIR)
+		echo "Not a directory"
+		;;
+
+	21 | EISDIR)
+		echo "Is a directory"
+		;;
+
+	22 | EINVAL)
+		echo "Invalid argument"
+		;;
+
+	23 | ENFILE)
+		echo "Too many open files in system"
+		;;
+
+	24 | EMFILE)
+		echo "Too many open files"
+		;;
+
+	25 | ENOTTY)
+		echo "Inappropriate ioctl for device"
+		;;
+
+	26 | ETXTBSY)
+		echo "Text file busy"
+		;;
+
+	27 | EFBIG)
+		echo "File too large"
+		;;
+
+	28 | ENOSPC)
+		echo "Device out of space"
+		;;
+
+	29 | ESPIPE)
+		echo "Illegal seek"
+		;;
+
+	30 | EROFS)
+		echo "Read-only file system"
+		;;
+
+	31 | EMLINK)
+		echo "Too many links"
+		;;
+
+	32 | EPIPE)
+		echo "Broken pipe"
+		;;
+
+	33 | EDOM)
+		echo "Numerical argument out of domain"
+		;;
+
+	34 | ERANGE)
+		echo "Result out of range"
+		;;
+
+	35 | EAGAIN)
+		echo "Resource temporarily unavailable"
+		;;
+
+	36 | EINPROGRESS)
+		echo "Operation now in progress"
+		;;
+
+	37 | EALREADY)
+		echo "Operation already in progress"
+		;;
+
+	38 | ENOTSOCK)
+		echo "Socket operation on non-socket"
+		;;
+
+	39 | EDESTADDRREQ)
+		echo "Destination address required"
+		;;
+
+	40 | EMSGSIZE)
+		echo "Message too long"
+		;;
+
+	41 | EPROTOTYPE)
+		echo "Protocol wrong type for socket"
+		;;
+
+	42 | ENOPROTOOPT)
+		echo "Protocol not available"
+		;;
+
+	43 | EPROTONOSUPPORT)
+		echo "Protocol not supported"
+		;;
+
+	44 | ESOCKTNOSUPPORT)
+		echo "Socket type not supported"
+		;;
+
+	45 | EOPNOTSUPP)
+		echo "Operation not supported"
+		;;
+
+	46 | EPFNOSUPPORT)
+		echo "Protocol family not supported"
+		;;
+
+	47 | EAFNOSUPPORT)
+		echo "Address family not supported by protocol family"
+		;;
+
+	48 | EADDRINUSE)
+		echo "Address already in use"
+		;;
+
+	49 | EADDRNOTAVAIL)
+		echo "Cannot assign requested address"
+		;;
+
+	50 | ENETDOWN)
+		echo "Network is down"
+		;;
+
+	51 | ENETUNREACH)
+		echo "Network is unreachable"
+		;;
+
+	52 | ENETRESET)
+		echo "Network dropped connection on reset"
+		;;
+
+	53 | ECONNABORTED)
+		echo "Software caused connection abort"
+		;;
+
+	54 | ECONNRESET)
+		echo "Connection reset by peer"
+		;;
+
+	55 | ENOBUFS)
+		echo "No buffer space available"
+		;;
+
+	56 | EISCONN)
+		echo "Socket is already connected"
+		;;
+
+	57 | ENOTCONN)
+		echo "Socket is not connected"
+		;;
+
+	58 | ESHUTDOWN)
+		echo "Cannot send after socket shutdown"
+		;;
+
+	59 | ETOOMANYREFS)
+		echo "Too many references: can't splice"
+		;;
+
+	60 | ETIMEDOUT)
+		echo "Operation timed out"
+		;;
+
+	61 | ECONNREFUSED)
+		echo "Connection refused"
+		;;
+
+	62 | ELOOP)
+		echo "Too many levels of symbolic links"
+		;;
+
+	63 | ENAMETOOLONG)
+		echo "File name too long"
+		;;
+
+	64 | EHOSTDOWN)
+		echo "Host is down"
+		;;
+
+	65 | EHOSTUNREACH)
+		echo "No route to host"
+		;;
+
+	66 | ENOTEMPTY)
+		echo "Directory not empty"
+		;;
+
+	67 | EPROCLIM)
+		echo "Too many processes"
+		;;
+
+	68 | EUSERS)
+		echo "Too many users"
+		;;
+
+	69 | EDQUOT)
+		echo "Disc quota exceeded"
+		;;
+
+	70 | ESTALE)
+		echo "Stale NFS file handle"
+		;;
+
+	# 71
+
+	72 | EBADRPC)
+		echo "RPC struct is bad"
+		;;
+
+	73 | ERPCMISMATCH)
+		echo "RPC version wrong"
+		;;
+
+	74 | EPROGUNAVAIL)
+		echo "RPC program not avail"
+		;;
+
+	75 | EPROGMISMATCH)
+		echo "Program version wrong"
+		;;
+
+	76 | EPROCUNAVAIL)
+		echo "Bad procedure for program"
+		;;
+
+	77 | ENOLCK)
+		echo "No locks available"
+		;;
+
+	78 | ENOSYS)
+		echo "Function not implemented"
+		;;
+
+	79 | EFTYPE)
+		echo "Inappropriate file type or format"
+		;;
+
+	80 | EAUTH)
+		echo "Authentication error"
+		;;
+
+	81 | ENEEDAUTH)
+		echo "Need authenticator"
+		;;
+
+	82 | EIPSEC)
+		echo "IPsec processing failure"
+		;;
+
+	83 | ENOATTR)
+		echo "Attribute not found"
+		;;
+
+	84 | EILSEQ)
+		echo "Illegal byte sequence"
+		;;
+
+	85 | ENOMEDIUM)
+		echo "No medium found"
+		;;
+
+	86 | EMEDIUMTYPE)
+		echo "Wrong medium type"
+		;;
+
+	87 | EOVERFLOW)
+		echo "Conversion overflow"
+		;;
+
+	88 | ECANCELED)
+		echo "Operation canceled"
+		;;
+
+	89 | EIDRM)
+		echo "Identifier removed"
+		;;
+
+	90 | ENOMSG)
+		echo "No message of desired type"
+		;;
+
+	*)
+		echo "UNDEFINED ERROR"
+		return 1
+		;;
+
+	esac
+
+	return 0
+}
+
+geterrnum()
+{
+	case $1 in
+
+	EPERM)	echo 1 ;;
+	ENOENT)	echo 2 ;;
+	ESRCH)	echo 3 ;;
+	EINTR)	echo 4 ;;
+	EIO)	echo 5 ;;
+	ENXIO)	echo 6 ;;
+	E2BIG)	echo 7 ;;
+	ENOEXEC)	echo 8 ;;
+	EBADF)	echo 9 ;;
+	ECHILD)	echo 10 ;;
+	EDEADLK)	echo 11 ;;
+	ENOMEM)	echo 12 ;;
+	EACCES)	echo 13 ;;
+	EFAULT)	echo 14 ;;
+	ENOTBLK) 	echo 15 ;;
+	EBUSY)	echo 16 ;;
+	EEXIST)	echo 17 ;;
+	EXDEV)	echo 18 ;;
+	ENODEV)	echo 19 ;;
+	ENOTDIR)	echo 20 ;;
+	EISDIR)	echo 21 ;;
+	EINVAL)	echo 22 ;;
+	ENFILE)	echo 23 ;;
+	EMFILE)	echo 24 ;;
+	ENOTTY)	echo 25 ;;
+	ETXTBSY)	echo 26 ;;
+	EFBIG)	echo 27 ;;
+	ENOSPC)	echo 28 ;;
+	ESPIPE)	echo 29 ;;
+	EROFS)	echo 30 ;;
+	EMLINK)	echo 31 ;;
+	EPIPE)	echo 32 ;;
+	EDOM)	echo 33 ;;
+	ERANGE)	echo 34 ;;
+	EAGAIN)	echo 35 ;;
+	EINPROGRESS)	echo 36 ;;
+	EALREADY)	echo 37 ;;
+	ENOTSOCK)	echo 38 ;;
+	EDESTADDRREQ)	echo 39 ;;
+	EMSGSIZE)	echo 40 ;;
+	EPROTOTYPE)	echo 41 ;;
+	ENOPROTOOPT)	echo 42 ;;
+	EPROTONOSUPPORT)	echo 43 ;;
+	ESOCKTNOSUPPORT)	echo 44 ;;
+	EOPNOTSUPP)	echo 45 ;;
+	EPFNOSUPPORT)	echo 46 ;;
+	EAFNOSUPPORT)	echo 47 ;;
+	EADDRINUSE)	echo 48 ;;
+	EADDRNOTAVAIL)	echo 49 ;;
+	ENETDOWN)	echo 50 ;;
+	ENETUNREACH)	echo 51 ;;
+	ENETRESET)	echo 52 ;;
+	ECONNABORTED)	echo 53 ;;
+	ECONNRESET)	echo 54 ;;
+	ENOBUFS)	echo 55 ;;
+	EISCONN)	echo 56 ;;
+	ENOTCONN)	echo 57 ;;
+	ESHUTDOWN)	echo 58 ;;
+	ETOOMANYREFS)	echo 59 ;;
+	ETIMEDOUT)	echo 60 ;;
+	ECONNREFUSED)	echo 61 ;;
+	ELOOP)	echo 62 ;;
+	ENAMETOOLONG)	echo 63 ;;
+	EHOSTDOWN)	echo 64 ;;
+	EHOSTUNREACH)	echo 65 ;;
+	ENOTEMPTY)	echo 66 ;;
+	EPROCLIM)	echo 67 ;;
+	EUSERS)	echo 68 ;;
+	EDQUOT)	echo 69 ;;
+	ESTALE)	echo 70 ;;
+	EBADRPC)	echo 72 ;;
+	ERPCMISMATCH)	echo 73 ;;
+	EPROGUNAVAIL)	echo 74 ;;
+	EPROGMISMATCH)	echo 75 ;;
+	EPROCUNAVAIL)	echo 76 ;;
+	ENOLCK)	echo 77 ;;
+	ENOSYS)	echo 78 ;;
+	EFTYPE)	echo 79 ;;
+	EAUTH)	echo 80 ;;
+	ENEEDAUTH)	echo 81 ;;
+	EIPSEC)	echo 82 ;;
+	ENOATTR)	echo 83 ;;
+	EILSEQ)	echo 84 ;;
+	ENOMEDIUM)	echo 85 ;;
+	EMEDIUMTYPE)	echo 86 ;;
+	EOVERFLOW)	echo 87 ;;
+	ECANCELED)	echo 88 ;;
+	EIDRM)	echo 89 ;;
+	ENOMSG)	echo 90 ;;
+
+	*)
+		# undefined
+		echo 127
+		return 1
+		;;
+
+	esac
+
+	return 0
+}
+
+_isdigit()
+{
+	case $1 in
+	*[!0-9]* | "")
+		return 1
+		;;
+	esac
+	return 0
+}
+
+#
+# progname
+#
+# unified way to get progname
+# uses shell param substitution instead of invoking basename
+# because it is intrinsically a bit safer / more rugged
+#
+progname()
+{
+	if ! echo "${0##*/}"; then
+		return 1
+	fi
+	return 0
+}
+
+__isis_script_lib_have_string_err=1
