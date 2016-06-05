@@ -4,12 +4,12 @@ case $__script_lib_have_misc_current_pid in
 	;;
 esac
 
-case $ISIS_SCRIPT_LIB_ROOT in
+case $SCRIPT_LIB_ROOT in
 "")
 	_libroot=/usr/share/scriptlib
 	;;
 *)
-	_libroot=$ISIS_SCRIPT_LIB_ROOT
+	_libroot=$SCRIPT_LIB_ROOT
 	;;
 esac
 
