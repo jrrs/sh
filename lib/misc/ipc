@@ -64,6 +64,7 @@ IPC_INIT()
 	local funcname=IPC_INIT
 	local usage="$funcname(): usage: $funcname() tmpdir [concurrency]"
 	local default_child_max=127
+	local default_concurrency=1
 	local p
 	local concurrency
 	local child_max
@@ -88,7 +89,7 @@ IPC_INIT()
 
 	concurrency=$2
 	if [ -z "$concurrency" ]; then
-		concurrency=1
+		concurrency=$default_concurrency
 	fi
 	if ! isdigit "$concurrency"; then
 		warn EINVAL "$funcname(): concurrency: '$concurrency'"
