@@ -72,6 +72,13 @@ IPC_INIT()
 	local pending_dir running_dir ended_dir
 	local tmpdir
 
+	# file globbing must be active
+	case $- in
+	*f*)
+		warn EPERM "$funcname(): 'noglob' must be unset"
+		return 1
+	esac
+
 	tmpdir=$1
 	if [ -z "$tmpdir" ]; then
 		warn EINVAL "$funcname(): null tmpdir"
@@ -160,14 +167,16 @@ IPC_INIT()
 # returns 0 on success
 # returns 1 on error
 #
-# NOTE: "no such process" warnings
-#
 IPC_KILL()
 {
 	local funcname=IPC_KILL
 	local usage="$funcname(): usage: $funcname"
 	local k s dir
+
+	# child files are PIDs with an underscore prefix representing how
+	# many generations deep the child is.
 	local child
+	
 	if [ -z "$IPC_PENDING_DIR" ]; then
 		warnx "$funcname(): \$IPC_PENDING_DIR null"
 		return 1
@@ -191,7 +200,7 @@ IPC_KILL()
 					case $child in
 					_*)
 						child=${child##*_}
-						debug 2 "$funcname(): chopped _ off \$child: '$child'
+						debug 2 "$funcname(): chopped '_' off \$child: '$child'
 						continue
 						;;
 					esac
