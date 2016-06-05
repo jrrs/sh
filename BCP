@@ -92,7 +92,7 @@ e.g.:
 
 # USERLAND
 - in nearly all cases, reaching out to the userland is more performance-expensive than running internal/builtin commands.  consider keeping things internal if there is no harm to readability.
-- do not hardcode paths to binaries.  instead, lean on PATH.  modify it if desired/required.  different distros put stuff wherever they want, and heir(7) means different things to different people.  clutter up PATH if needed.  that's what it is there for.
+- do not hardcode paths to binaries.  instead, lean on PATH.  modify it if desired/required.  different distros put stuff wherever they want, and hier(7) means different things to different people.  clutter up PATH if needed.  that's what it is there for.
 - prefer portable userland commands.  'pkill' and 'pgrep' are more prolific than 'killall' and 'pidof'
 - avoid non-portable uses of userland commands.  e.g.: openbsd grep-and-friends support the '[:>:]' and '[:<:]' character classes, however these are not specified by POSIX and don't generally appear elsewhere.
 - be specifically cautious when passing arguments to 
