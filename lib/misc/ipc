@@ -121,7 +121,7 @@ IPC_INIT()
 
 	pd="$tmpdir/pending"
 	rd="$tmpdir/running"
-	ed="$tmpdir/end"
+	ed="$tmpdir/ended"
 	if ! mkdir -- "$pd" "$rd" "$ed"; then
 		warnx "$funcname(): failed to populate tmpdir: '$tmpdir'"
 		return 1
