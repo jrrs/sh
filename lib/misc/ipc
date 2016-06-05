@@ -1,0 +1,831 @@
+# $Id: ipc 34212 2011-10-24 13:56:40Z jwm $
+
+# Copyright (c) 2008 jared rr spiegel <jrrs@ice-nine.org>
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+case $__isis_script_lib_have_misc_ipc in
+1)
+	return 0
+	;;
+esac
+
+case $ISIS_SCRIPT_LIB_ROOT in
+"")
+	_libroot=/usr/share/scriptlib
+	;;
+*)
+	_libroot=$ISIS_SCRIPT_LIB_ROOT
+	;;
+esac
+
+. ${_libroot}/string/err
+. ${_libroot}/string/isctype
+. ${_libroot}/misc/current_pid
+
+#
+# usage: IPC_INIT tmpdir [concurrency]
+#
+# tmpdir - a writeable directory for IPC_* functions to perform work in.
+# concurrency - maximum child concurrency for this IPC_INIT()'ed group
+#	of processes.  valid range is 1 - CHILD_MAX.  default is 1. 
+#	if CHILD_MAX is non numeric, such as on filter02/amd64 right now
+#	where it is 'undefined' (GO GNU!), the max defaults to 127.
+#
+# IPC_INIT() performs preliminaries and sanity checks, and fledges out tmpdir
+# with the required IPC hierarchy.  it is recommended that tmpdir
+# not be used by anything else in the script.
+#
+# IPC_INIT() will drop a file in tmpdir named ''info''; this file
+# is inteded to be sourced by the caller with the shell `.' operator
+# and contains the following parameters:
+#
+# IPC_RUNNING_DIR, IPC_PENDING_DIR, IPC_ENDED_DIR
+#	subdirs of the given tmpdir, used for internal queue management.
+#	the various IPC_*() functions drop pid-named files into these
+#	directories during run time.  external programs can approximate
+#	the number of children running by looking at these directories.
+# IPC_MASTER
+#	the pid of the process who called IPC_INIT.
+# IPC_CONCURRENCY
+#	the value of concurrency given to IPC_INIT.
+#
+# returns 0 on success (IPC safe to use after sourcing ``info'' file)
+# returns 1 on error (IPC not safe to use)
+#
+# WARNING
+#
+# do not invoke IPC_INIT from within a command substitution (eg:
+# ``if ! err=$(IPC_INIT "$tmpdir"); then echo $err; fi'').
+# as this will taint the value current_pid() returns for IPC_MASTER.
+# naturally, it is perfectly fine to invoke it without a command substitution
+# (eg: ``if ! IPC_INIT "$tmpdir"; then error cleanup; fi'').  NOTE that this
+# situation is precisely why IPC_INIT() doesn't do something useful like
+# echo back the full path to the info file, which would open the door for
+# nice situations like "IPC_INIT $(mktemp -d)".  c'est la vie.
+#
+IPC_INIT()
+{
+	local funcname=IPC_INIT
+	local usage="$funcname(): usage: $funcname() tmpdir [concurrency]"
+	local p t c m
+	local pd rd ed
+
+	t=$1
+	if [ -z "$t" ]; then
+		warn EINVAL "$funcname(): null tmpdir"
+		warnx "$usage"
+		return 1
+	fi
+	if [ ! -d "$t" ]; then
+		warn ENOTDIR "$funcname(): tmpdir: '$t'"
+		warnx "$usage"
+		return 1
+	fi
+	if [ ! -w "$t" ]; then
+		warn EACCES "$funcname(): tmpdir: '$t'"
+		return 1
+	fi
+
+	c=$2
+	if [ -z "$c" ]; then
+		c=1
+	fi
+	if ! isdigit "$c"; then
+		warn EINVAL "$funcname(): concurrency: '$c'"
+		return 1
+	fi
+	if ! m=$(getconf CHILD_MAX); then
+		warnx "$funcname(): failed to check getconf(1)"
+		return 1
+	fi
+	if ! isdigit "$m"; then
+		m=127
+	fi
+	if [ $c -gt $m ]; then
+		warnx "$funcname(): limiting concurrency: '$c' to CHILD_MAX: '$m'"
+		c=$m
+	fi
+
+	if ! p=$(current_pid); then
+		warnx "$funcname(): failed current_pid()"
+		return 1
+	fi
+
+	if [ -e "$t/info" ]; then
+		warnx "$funcname(): stale tmpdir: '$t', already has info file"
+		return 1
+	fi
+
+	pd="$t/pending"
+	rd="$t/running"
+	ed="$t/end"
+	if ! mkdir -- "$pd" "$rd" "$ed"; then
+		warnx "$funcname(): failed to populate tmpdir: '$t'"
+		return 1
+	fi
+
+	# drop the info file down
+	cat > "$t/info" <<- EOT
+		IPC_PENDING_DIR=$pd
+		IPC_RUNNING_DIR=$rd
+		IPC_ENDED_DIR=$ed
+		IPC_MASTER=$p
+		IPC_CONCURRENCY=$c
+		export IPC_PENDING_DIR IPC_RUNNING_DIR IPC_ENDED_DIR
+		export IPC_MASTER IPC_CONCURRENCY
+	EOT
+
+	case $BASH_VERSION in
+	"")
+		;;
+	*)
+		shopt -s expand_aliases
+		;;
+	esac
+
+	. "$t/info"
+	return 0
+}
+
+#
+# usage: IPC_KILL
+#
+# individually checks $IPC_PENDING_DIR and $IPC_RUNNING_DIR for any pid
+# files, sends a kill to everything it finds in there.
+#
+# it will iterate over them until they are gone.
+#
+# returns 0 on success
+# returns 1 on error
+#
+# NOTE: "no such process" warnings
+#
+IPC_KILL()
+{
+	local funcname=IPC_KILL
+	local usage="$funcname(): usage: $funcname"
+	local k s dir
+	if [ -z "$IPC_PENDING_DIR" ]; then
+		warnx "$funcname(): \$IPC_PENDING_DIR null"
+		return 1
+	fi
+	if [ ! -d "$IPC_PENDING_DIR" ]; then
+		warn ENOTDIR "$funcname(): \$IPC_PENDING_DIR: '$IPC_PENDING_DIR'"
+	else
+		while :; do
+			s=0
+			for c in "$IPC_PENDING_DIR/"*; do
+				case $c in
+				*"*")
+					debug 2 "$funcname(): found an *"
+					continue
+					;;
+				esac
+				c=${c##*/}
+
+				# chop off leading child depth markers
+				while :; do
+					case $c in
+					_*)
+						c=${c##*_}
+						debug 2 "$funcname(): chopped _ off $c"
+						continue
+						;;
+					esac
+					break
+				done
+
+				case $c in
+				$IPC_MASTER)
+					warnx "$funcname(): \$IPC_MASTER seen in \$IPC_PENDING_DIR, skipping"
+					continue
+					;;
+				esac
+
+				case ${#k} in
+				0)
+					k=$c
+					;;
+				*)
+					k="$c $k"
+					;;
+				esac
+				debug 2 "$funcname(): \$k: '$k'"
+				s=$(( $s + 1 ))
+
+			done
+			if [ $s -eq 0 ]; then
+				break
+			fi
+			kill $k || true
+
+		done
+	fi
+	if [ -z "$IPC_RUNNING_DIR" ]; then
+		warnx "$funcname(): \$IPC_RUNNING_DIR null"
+		return 1
+	fi
+	if [ ! -d "$IPC_RUNNING_DIR" ]; then
+		warn ENOTDIR "$funcname(): \$IPC_PENDING_DIR: '$IPC_PENDING_DIR'"
+	else
+		while :; do
+			s=0
+			for c in "$IPC_RUNNING_DIR/"*; do
+				case $c in
+				*"*")
+					continue
+					;;
+				esac
+				c=${c##*/}
+
+				case $c in
+				$IPC_MASTER)
+					warnx "$funcname(): \$IPC_MASTER seen in \$IPC_RUNNING_DIR, skipping"
+					continue
+					;;
+				esac
+
+				case ${#k} in
+				0)
+					k=$c
+					;;
+				*)
+					k="$c $k"
+					;;
+				esac
+				s=$(( $s + 1 ))
+
+			done
+			if [ $s -eq 0 ]; then
+				break
+			fi
+			kill $k || true
+		done
+	fi
+	return 0
+}
+
+#
+# usage: IPC_FORK commandline to fork
+#
+# if we are not at the limit of concurrency, forks a new child.
+# otherwise, it will manage the currently forked children until
+# some headroom appears, at which point the new child will be forked.
+#
+# returns 0 on success
+# returns 1 on error
+#
+# IPC_FORK calls one of two helper functions based on whether
+# or not it is being run by the $IPC_MASTER.  reason for this
+# distinction is that process oversight IPC_FORK is also responsible for sending
+# the process oversight
+#
+# note, if you are running IPC_FORK from within forked children,
+# you *will* deadlock if concurrency is less than the maximum
+# number of potentially unstarted pending child-forked children
+# out there.  eg, *really* don't leave it at the defaut of '1' in
+# this case.
+#
+# XXX WARNING:
+#
+# backgrounding children from children is currently VERY DANGEROUS.
+# it *functions*, but you need to specify a concurrency WAY HIGHER
+# than you otherwise think you should.  it is strongly recommended
+# to NOT background children from children at the present time
+#
+IPC_FORK()
+{
+	local funcname=IPC_FORK
+	local p x
+	if [ -z "$IPC_MASTER" ]; then
+		warnx "$funcname(): \$IPC_MASTER is null"
+		return 1
+	fi
+	if ! p=$(current_pid "$IPC_MASTER"); then
+		warnx "$funcname(): failed current_pid()"
+		return 1
+	fi
+	debug 1 "$funcname(): \$p is: '$p'"
+	case $p in
+	$IPC_MASTER)
+		debug 2 "$funcname(): shall fork _ipc_master"
+		if ! _ipc_master "$*"; then
+			warnx "$funcname(): failed _ipc_master()"
+			return 1
+		fi
+		;;
+	*)
+		x=0
+		while :; do
+			case $p in
+			_*)
+				p=${p#_}
+				x=$(( $x + 1 ))
+				;;
+			*)
+				break
+				;;
+			esac
+		done
+		debug 1 "$funcname(): \$p: '$p'; shall fork _ipc_child $x"
+		if ! _ipc_child "$x" "$*"; then
+			warnx "$funcname(): failed _ipc_child()"
+			return 1
+		fi
+		;;
+	esac
+	return 0
+}
+
+#
+# usage: IPC_FLUSH
+#
+# loops through _ipc_start and _ipc_end until they both did nothing $max times.
+#
+# $max is 16 by default, based on seeing things work just fine at 8 and then
+# doubling it for safety's sake
+#
+# XXX check to see if current_pid is actually $IPC_MASTER
+#
+IPC_FLUSH()
+{
+	local funcname=IPC_FLUSH
+	local e r s t	# ending, running, started, total
+	local i		# current iteration of t being -eq 0
+	local max=8
+	while :; do
+		if ! e=$(_ipc_end); then
+			warnx "$funcname(): failed _ipc_end"
+			return 1
+		fi
+		if ! s=$(_ipc_start); then
+			warnx "$funcname(): failed _ipc_start"
+			return 1
+		fi
+		if ! r=$(_ipc_getnumchildren "$IPC_RUNNING_DIR"); then
+			warnx "$funcname(): failed _ipc_getnumchildren \$IPC_RUNNING_DIR"
+			return 1
+		fi
+		t=$(( $s + $e + $r ))
+		if [ $t -eq 0 ]; then
+			i=$(( $i + 1 ))
+		else
+			i=0
+		fi
+		if [ $i -gt $max ]; then
+			warnx "$funcname(): \$i -gt \$max"
+			break
+		fi
+	done
+	return 0
+}
+
+#
+# usage: IPC_START
+#
+# use at the start of all child processes/functions which are IPC_FORK()'d.
+#
+# for example:
+#
+# 	somefunc()
+# 	{
+# 		local var=b
+# 		code
+# 		return 0
+#	}
+#
+# becomes:
+#
+# 	somefunc()
+# 	{
+# 		IPC_START
+# 		local var=b
+# 		code
+# 		IPC_RETURN 0
+# 	{
+#
+# creates local variables to contain pid, creates trap handler
+# for use in signalling, and drops the current pid into the $IPC_PENDING_DIR.
+# upon receipt of start signal, moves current pid from $IPC_PENDING_DIR to
+# $IPC_RUNNING_DIR.
+#
+alias IPC_START='
+	if [ -z "$IPC_MASTER" ]; then
+		warnx "$funcname():[IPC_START] \$IPC_MASTER null"
+		warnx "$funcname():[IPC_START] concurrency control disabled"
+	else
+		local _ipc_pid _ipc_loop_stop=0
+		trap '\''trap - CONT; _ipc_loop_stop=1'\'' CONT
+		if ! _ipc_pid=$(current_pid "$IPC_MASTER"); then
+			warnx "$funcname()[IPC_START]: failed current_pid()"
+			return 1
+		fi
+		if [ ! -d "$IPC_PENDING_DIR" ]; then
+			warnx "$funcname()[IPC_START][$_ipc_pid]: pending dir not exist or not a directory"
+			return 1
+		fi
+		if [ ! -d "$IPC_RUNNING_DIR" ]; then
+			warnx "$funcname()[IPC_START][$_ipc_pid]: running dir not exist or not a directory"
+			return 1
+		fi
+		> "$IPC_PENDING_DIR/$_ipc_pid"
+		while [ $_ipc_loop_stop -eq 0 ]; do
+			sleep 0.1
+		done
+		# strip off leading underscores during mv(1)
+		mv -- "$IPC_PENDING_DIR/$_ipc_pid" "$IPC_RUNNING_DIR/${_ipc_pid##*_}"
+	fi'
+
+#
+# usage: IPC_RETURN [retval]
+#
+# use in place of 'return' (for all instances!) inside all child processes/
+# functions which are IPC_FORK()'d.
+#
+# see IPC_START above for an example usage.
+#
+# adds the current pid to the $IPC_ENDED_DIR and then returns whatever value
+# was specfied.  if no value specified, the effect is the same as invoking
+# a regular 'return' without args.
+#
+alias IPC_RETURN='
+	if [ -z "$IPC_MASTER" ]; then
+		warnx "$funcname():[IPC_RETURN][$_ipc_pid] \$IPC_MASTER null"
+		warnx "$funcname():[IPC_RETURN][$_ipc_pid] concurrency control disabled"
+		return 1
+	else
+		if [ ! -d "$IPC_ENDED_DIR" ]; then
+			warnx "$funcname():[IPC_RETURN][$_ipc_pid] no \$IPC_ENDED_DIR"
+			return 1
+		fi
+		> "$IPC_ENDED_DIR/$_ipc_pid"
+	fi
+	return' # leave the closing apostrophe on this line
+
+#
+# _ipc_getnumchildren dir
+#
+# echos the number of children in $dir.
+#
+# returns 0 on successful check
+# returns 1 on error
+#
+_ipc_getnumchildren()
+{
+	local funcname=_ipc_getnumchildren
+	local f n=0
+	local usage="$funcname(): usage: $funcname dir"
+	if [ -z "$1" ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	for f in "$1"/*; do
+		n=$(( $n + 1 ))
+	done
+	case $f in
+	*"*")
+		echo 0
+		;;
+	*)
+		echo $n
+		;;
+	esac
+	return 0
+}
+
+#
+# _ipc_clean_ended
+#
+# echos back the number of children it cleaned up (may be 0) and returns 0
+# returns 1 on error
+#
+_ipc_clean_ended()
+{
+	local funcname=_ipc_clean_ended
+	local usage="$funcname(): usage: $funcname"
+	local ef rf rm
+	local x=0
+	for ef in $IPC_ENDED_DIR/*; do
+		case $ef in
+		"$IPC_ENDED_DIR/*")
+			break
+			;;
+		esac
+		rf=$IPC_RUNNING_DIR/${ef##*/}
+		if [ ! -f "$rf" ]; then
+			warnx "$funcname() \${ef##*/}: '${ef##*/}' exists in ended but not running"
+			return 1
+		fi
+		case ${#rm} in
+		0)
+			rm="$ef $rf"
+			;;
+		*)
+			rm="$ef $rf $rm"
+			;;
+		esac
+		debug 2 "$funcname(): \$rm: '$rm'"
+		x=$(( $x + 1 ))
+	done
+	if [ $x -gt 0 ]; then
+		if ! rm -- $rm; then
+			return 1
+		fi
+	fi
+	echo $x
+	return 0
+}
+
+#
+# _ipc_start_n_children n
+#
+# starts up to $n children from the $IPC_PENDING_DIR by sending them all SIGCONT
+# to break them out of IPC_START.
+#
+# returns 1 on error
+# returns 0 otherwise and echos back # of children it sent SIGCONT to
+#
+# XXX really should take ARG_MAX into account
+#
+_ipc_start_n_children()
+{
+	local funcname=_ipc_start_n_children
+	local usage="$funcname(): usage: $funcname n"
+	local n=$1 c s=0 k s
+	local string
+	case $n in
+	"" | *[!0-9]*)
+		warnx "$funcname(): non numeric \$n"
+		warnx "$usage"
+		return 1
+		;;
+	esac
+
+	#
+	# we will be getting a listing of the directory
+	# in an order that, while correct, is the inverse
+	# of what we want.  due to the underscore prefixes,
+	# the following list will occur in closest-child-
+	# first" order.  we want to SIGCONT the children in
+	# farthest-child-first.  we also want to SIGCONT
+	# only the $n children we were told.  the cost of
+	# calling to the userland is too great here, so it is
+	# much cheaper to take the output and use a param to
+	# flip its order than it is to do a single $(ls -r).
+	#
+	for c in "$IPC_PENDING_DIR/"*; do
+		case $c in
+		*"*")
+			echo 0
+			return 0
+			;;
+		esac
+
+		# chop off leading child depth markers
+		c=${c#$IPC_PENDING_DIR/}
+		while :; do
+			case $c in
+			_*)
+				c=${c##*_}
+				continue
+				;;
+			esac
+
+			break
+		done
+
+		case $c in
+			$IPC_MASTER)
+			warnx "$funcname(): \$IPC_MASTER seen in \$IPC_PENDING_DIR"
+			return 1
+			;;
+		esac
+
+		# we can afford to be messy and not
+		# worry about the extra space that
+		# blindly doing string="$c $string" 
+		# earns on the first time around.
+		string="$c $string"
+
+	done
+
+	# build up kill string up to $n items
+	for c in $string; do
+		if [ $s -ge $n ]; then
+			break
+		fi
+
+		case ${#k} in
+		0)
+			k=$c
+			;;
+		*)
+			k="$c $k"
+			;;
+		esac
+
+		s=$(( $s + 1 ))
+	done
+
+	if [ $s -gt 0 ]; then
+		if ! kill -CONT $k; then
+			return 1
+		fi
+	fi
+	echo $s
+	return 0
+}
+
+#
+# _ipc_start 
+#
+# runs _ipc_start_n_children() with an argument that is the lesser of either
+# the number pending children or the difference between $IPC_CONCURRENCY and
+# what it finds to be running 
+#
+# returns 1 on error
+# returns 0 on success and echoes back number of children it thinks it
+#           started.  echos '-1' to indicate that we are already
+#	    at max IPC_CONCURRENCY and no attempt to start children was made.
+#
+_ipc_start()
+{
+	local funcname=_ipc_start
+	local r p headroom s
+	if ! r=$(_ipc_getnumchildren "$IPC_RUNNING_DIR"); then
+		warnx "$funcname(): failed _ipc_getnumchildren \$IPC_RUNNING_DIR: '$IPC_RUNNING_DIR'"
+		return 1
+	fi
+	headroom=$(( $IPC_CONCURRENCY - $r ))
+	#
+	# if we are at max already, indicate that to the caller
+	#
+	if [ $headroom -le 0 ]; then
+		echo -1
+		return 0
+	fi
+	if ! p=$(_ipc_getnumchildren "$IPC_PENDING_DIR"); then
+		warnx "$funcname(): failed _ipc_getnumchildren \$IPC_PENDING_DIR: '$IPC_PENDING_DIR'"
+		return 1
+	fi
+	if [ $p -eq 0 ]; then
+		# no pending children
+		echo 0
+		return 0
+	fi
+	# don't start more than $headroom
+	if [ $p -gt $headroom ]; then
+		p=$headroom
+	fi
+	if ! s=$(_ipc_start_n_children "$p"); then
+		warnx "$funcname(): failed _ipc_start_n_children() '$p'"
+		return 1
+	fi
+	echo $s
+	return 0
+}
+
+#
+# usage: _ipc_end
+#
+# runs _ipc_clean_ended() until it reports no children
+# were cleaned, then echos back the total number of children it cleaned up.
+#
+_ipc_end()
+{
+	local funcname=_ipc_end
+	local t=0 x
+	#
+	# this loop will run until there are no children in the
+	# $IPC_ENDED_DIR.  at the end of the loop, '$ended' will be
+	# however many children we cleaned up during looping
+	#
+	while :; do
+		if ! x=$(_ipc_clean_ended); then
+			warnx "$funcname(): failed _ipc_clean_ended()"
+			return 1
+		fi
+		if [ $x -eq 0 ]; then
+			break
+		fi
+		t=$(( $t + $x ))
+	done
+	echo $t
+	return 0
+}
+
+#
+# usage: _ipc_master
+#
+# invoked by IPC_FORK if IPC_FORK was called from the $IPC_MASTER pid.
+#
+_ipc_master()
+{
+	local funcname=_ipc_master
+	local r1 r2 r c t
+	while :; do
+		debug 2 "$funcname(): trying _ipc_end()"
+		if ! c=$(_ipc_end); then
+			warnx "$funcname(): failed _ipc_end()"
+			return 1
+		fi
+		r1=0
+		if ! r1=$(_ipc_getnumchildren "$IPC_RUNNING_DIR"); then
+			warnx "$funcname(): failed _ipc_getnumchildren \$IPC_RUNNING_DIR"
+			return 1
+		fi
+		if ! c=$(_ipc_start); then
+			warnx "$funcname(): failed _ipc_start"
+			return 1
+		fi
+		if [ $c -eq -1 ]; then
+			debug 2 "$funcname(): already at max concurrency"
+			continue
+		fi
+		if [ $c -ge $IPC_CONCURRENCY ]; then
+			# we just think we started $IPC_CONCURRENCY's worth of
+			# children, so chill out
+			debug 2 "$funcname(): just started \$IPC_CONCURRENCY's worth"
+			continue
+		fi
+		r2=0
+		if ! r2=$(_ipc_getnumchildren "$IPC_RUNNING_DIR"); then
+			warnx "$funcname(): failed _ipc_getnumchildren \$IPC_RUNNING_DIR"
+			return 1
+		fi
+		if [ $r1 -gt $r2 ]; then
+			r=$r1
+		else
+			r=$r2
+		fi
+		t=$(( $c + $r ))
+
+		# if we are at maximum, we need to
+		# loop back to the top and look for more ended children
+		if [ $t -ge $IPC_CONCURRENCY ]; then
+			continue
+		fi
+		debug 2 "$funcname(): eval: '$*'"
+		eval "$*" &
+		break
+	done
+	return 0
+}
+
+#
+# usage: _ipc_child current_pid
+#
+# invoked by IPC_FORK if IPC_FORK was not called from the $IPC_MASTER pid.
+#
+# inspects $IPC_RUNNING_DIR and $IPC_PENDING_DIR, compares against
+# $IPC_CONCURRENCY; sleeps if too many running, otherwise evals the
+# child with '&'.
+#
+# doesn't send any signals 
+#
+# RETURN
+# 0 - evaled a child
+# 1 - failed _ipc_getnumchildren()
+#
+_ipc_child()
+{
+	local funcname=_ipc_child
+	local depth
+	local r p headroom
+	depth=$1
+	shift
+	while :; do
+		if ! r=$(_ipc_getnumchildren "$IPC_RUNNING_DIR"); then
+			warnx "$funcname(): failed _ipc_getnumchildren \$IPC_RUNNING_DIR"
+			return 1
+		fi
+		if ! p=$(_ipc_getnumchildren "$IPC_PENDING_DIR"); then
+			warnx "$funcname(): failed _ipc_getnumchildren \$IPC_PENDING_DIR"
+			return 1
+		fi
+		headroom=$(( $IPC_CONCURRENCY + $depth - $r - $p ))
+		debug 2 "$funcname(): \$headroom: '$headroom'"
+		if [ $headroom -le 0 ]; then
+			# penalty sleep, not allowed to start yet
+			sleep 0.1
+			continue
+		fi
+		eval "$*" &
+		break
+	done
+	return 0
+}
+
+__isis_script_lib_have_misc_ipc=1
