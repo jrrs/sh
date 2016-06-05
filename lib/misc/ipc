@@ -46,7 +46,8 @@ esac
 # returns 0 on success (IPC safe to use after sourcing ``info'' file)
 # returns 1 on error (IPC not safe to use)
 #
-# WARNING
+# WARNING WWAARRNNIINNGG WARNING
+# ------- ------- -------
 #
 # do not invoke IPC_INIT from within a command substitution (eg:
 # ``if ! err=$(IPC_INIT "$tmpdir"); then echo $err; fi'').
@@ -55,7 +56,8 @@ esac
 # (eg: ``if ! IPC_INIT "$tmpdir"; then error cleanup; fi'').  NOTE that this
 # situation is precisely why IPC_INIT() doesn't do something useful like
 # echo back the full path to the info file, which would open the door for
-# nice situations like "IPC_INIT $(mktemp -d)".  c'est la vie.
+# nice situations like "IPC_INIT $(mktemp -d)" or the eval commonly seen
+# with ssh-agent.  c'est la vie.
 #
 IPC_INIT()
 {
