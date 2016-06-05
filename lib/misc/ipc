@@ -30,9 +30,8 @@ esac
 # with the required IPC hierarchy.  it is recommended that tmpdir
 # not be used by anything else in the script.
 #
-# IPC_INIT() will drop a file in tmpdir named ''info''; this file
-# is inteded to be sourced by the caller with the shell `.' operator
-# and contains the following parameters:
+# IPC_INIT() will drop a file in tmpdir named ``info'' and source it
+# automatically, thus setting the following parameters:
 #
 # IPC_RUNNING_DIR, IPC_PENDING_DIR, IPC_ENDED_DIR
 #	subdirs of the given tmpdir, used for internal queue management.
@@ -123,11 +122,11 @@ IPC_INIT()
 
 	# drop the info file down
 	cat > "$t/info" <<- EOT
-		IPC_PENDING_DIR=$pd
-		IPC_RUNNING_DIR=$rd
-		IPC_ENDED_DIR=$ed
-		IPC_MASTER=$p
-		IPC_CONCURRENCY=$concurrency
+		readonly IPC_PENDING_DIR=$pd
+		readonly IPC_RUNNING_DIR=$rd
+		readonly IPC_ENDED_DIR=$ed
+		readonly IPC_MASTER=$p
+		readonly IPC_CONCURRENCY=$concurrency
 		export IPC_PENDING_DIR IPC_RUNNING_DIR IPC_ENDED_DIR
 		export IPC_MASTER IPC_CONCURRENCY
 	EOT
