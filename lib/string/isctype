@@ -1,17 +1,15 @@
-# $Id: isctype 34212 2011-10-24 13:56:40Z jwm $
-
-case $__isis_script_lib_have_string_isctype in
+case $__script_lib_have_string_isctype in
 1)
 	return 0
 	;;
 esac
 
-case $ISIS_SCRIPT_LIB_ROOT in
+case $SCRIPT_LIB_ROOT in
 "")
 	_libroot=/usr/share/scriptlib
 	;;
 *)
-	_libroot=$ISIS_SCRIPT_LIB_ROOT
+	_libroot=$SCRIPT_LIB_ROOT
 	;;
 esac
 
@@ -162,4 +160,4 @@ isodd()
 	return 0
 }
 
-__isis_script_lib_have_string_isctype=1
+__script_lib_have_string_isctype=1

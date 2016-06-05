@@ -1,6 +1,4 @@
-# $Id: current_pid 34212 2011-10-24 13:56:40Z jwm $
-
-case $__isis_script_lib_have_misc_current_pid in
+case $__script_lib_have_misc_current_pid in
 1)
 	return 0
 	;;
@@ -29,12 +27,12 @@ esac
 #
 # for example:
 #
-# 	isis01 0128_16:18:37 $ . ./current_pid
-# 	isis01 0128_16:18:40 $ echo $$ $PPID
+# 	host01 0128_16:18:37 $ . ./current_pid
+# 	host01 0128_16:18:40 $ echo $$ $PPID
 # 	23802 7324
-# 	isis01 0128_16:18:47 $ current_pid
+# 	host01 0128_16:18:47 $ current_pid
 # 	7324
-# 	isis01 0128_16:18:49 $ pid=$(current_pid); echo $pid
+# 	host01 0128_16:18:49 $ pid=$(current_pid); echo $pid
 # 	23802
 #
 # if ppid is given on the commandline, the current
@@ -43,15 +41,15 @@ esac
 #
 # for example:
 #
-# 	isis01 0128_16:18:55 $ pid=$(current_pid 7324); echo $pid
+# 	host01 0128_16:18:55 $ pid=$(current_pid 7324); echo $pid
 # 	_23802
-# 	isis01 0128_16:24:56 $ bash
-# 	isis01 0128_16:25:06 $ . ./current_pid
-# 	isis01 0128_16:25:12 $ pid=$(current_pid 7324); echo $pid
+# 	host01 0128_16:24:56 $ bash
+# 	host01 0128_16:25:06 $ . ./current_pid
+# 	host01 0128_16:25:12 $ pid=$(current_pid 7324); echo $pid
 # 	__17982
-# 	isis01 0128_16:25:17 $ bash
-# 	isis01 0128_16:25:24 $ . ./current_pid
-# 	isis01 0128_16:25:29 $ pid=$(current_pid 7324); echo $pid
+# 	host01 0128_16:25:17 $ bash
+# 	host01 0128_16:25:24 $ . ./current_pid
+# 	host01 0128_16:25:29 $ pid=$(current_pid 7324); echo $pid
 # 	___18190
 #
 # RETURNS 0 on success, nonzero on fail.
@@ -168,4 +166,4 @@ current_pid()
 	return 0
 }
 
-__isis_script_lib_have_misc_current_pid=1
+__script_lib_have_misc_current_pid=1
