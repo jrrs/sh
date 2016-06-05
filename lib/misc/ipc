@@ -62,7 +62,8 @@ IPC_INIT()
 {
 	local funcname=IPC_INIT
 	local usage="$funcname(): usage: $funcname() tmpdir [concurrency]"
-	local p t c
+	local p t
+	local concurrency
 	local child_max
 	local pd rd ed
 
@@ -82,12 +83,12 @@ IPC_INIT()
 		return 1
 	fi
 
-	c=$2
-	if [ -z "$c" ]; then
-		c=1
+	concurrency=$2
+	if [ -z "$concurrency" ]; then
+		concurrency=1
 	fi
-	if ! isdigit "$c"; then
-		warn EINVAL "$funcname(): concurrency: '$c'"
+	if ! isdigit "$concurrency"; then
+		warn EINVAL "$funcname(): concurrency: '$concurrency'"
 		return 1
 	fi
 	if ! child_max=$(getconf CHILD_MAX); then
@@ -97,9 +98,9 @@ IPC_INIT()
 	if ! isdigit "$child_max"; then
 		child_max=127
 	fi
-	if [ $c -gt $child_max ]; then
-		warnx "$funcname(): limiting concurrency: '$c' to CHILD_MAX: '$child_max'"
-		c=$child_max
+	if [ $concurrency -gt $child_max ]; then
+		warnx "$funcname(): limiting concurrency: '$concurrency' to CHILD_MAX: '$child_max'"
+		concurrency=$child_max
 	fi
 
 	if ! p=$(current_pid); then
@@ -126,7 +127,7 @@ IPC_INIT()
 		IPC_RUNNING_DIR=$rd
 		IPC_ENDED_DIR=$ed
 		IPC_MASTER=$p
-		IPC_CONCURRENCY=$c
+		IPC_CONCURRENCY=$concurrency
 		export IPC_PENDING_DIR IPC_RUNNING_DIR IPC_ENDED_DIR
 		export IPC_MASTER IPC_CONCURRENCY
 	EOT
