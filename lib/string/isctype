@@ -1,0 +1,165 @@
+# $Id: isctype 34212 2011-10-24 13:56:40Z jwm $
+
+case $__isis_script_lib_have_string_isctype in
+1)
+	return 0
+	;;
+esac
+
+case $ISIS_SCRIPT_LIB_ROOT in
+"")
+	_libroot=/usr/share/scriptlib
+	;;
+*)
+	_libroot=$ISIS_SCRIPT_LIB_ROOT
+	;;
+esac
+
+#
+# reads $@
+#
+# returns 0 if all characters are numeric
+# returns 1 if at least one character is non-numeric
+#
+# XXX make an 'isnum()' (or whatever it should be named) to
+# handle '10#780' and '16#7f' and the like.
+#
+isdigit()
+{
+	if [ $# -eq 0 ]; then
+		return 1
+	fi
+	local arg
+	for arg in "$@"; do
+		case $arg in
+		*[!0-9]* | "")
+			return 1
+			;;
+		esac
+	done
+	return 0 
+}
+
+#
+# reads $@
+#
+# returns 0 if all characters are valid hexidecimal characters
+# returns 1 if at least one character is not valid for hexidecimal
+#
+isxdigit()
+{
+	if [ $# -eq 0 ]; then
+		return 1
+	fi
+	local arg
+	for arg in "$@"; do
+		case $arg in
+		*[!0-9a-fA-F]* | "")
+			return 1
+			;;
+		esac
+	done
+	return 0 
+}
+
+#
+# reads $@
+#
+# returns 0 if value of all input characters' value is less than 0x80.
+# returns 1 if at least one input character's value is greater than or equal
+#           to 0x80.
+# returns 2 for internal error
+#
+# XXX correctly replace '[[' with '['.
+#
+#isascii()
+#{
+#	local array[0]="";
+#	if ! strtoarray -r array "$@"; then
+#		return 2
+#	fi
+#	local c=0
+#	for c in ${array[@]}; do
+#		if [[ array[c] -gt 0x80 ]]; then
+#			return 1
+#		fi
+#	done
+#	return 0
+#}
+
+#
+# prints ASCII char corresponding to the lower
+# 7b of each input char
+#
+# XXX probably doesn't work for \000
+# XXX correctly replace '[[' with '['.
+#
+#toascii()
+#{
+#	local array[0]="";
+#	if ! strtoarray -r array "$@"; then
+#		return 1
+#	fi
+#	local x=0
+#	while [[ x -lt ${#array[@]} ]]; do
+#		if ! printf \\$(printf "%o" $(( ${array[x]} & 8#0177 ))); then
+#			return 1
+#		fi
+#		let ++x
+#	done
+#	return 0
+#}
+
+#
+# read stdin, convert uppercase to lowercase, write stdout
+#
+tolower()
+{
+	echo "$@" | tr '[:upper:]' '[:lower:]'
+}
+
+#
+# read stdin, convert lowercase to uppercase, write stdout
+#
+toupper()
+{
+	echo "$@" | tr '[:lower:]' '[:upper:]'
+}
+
+iseven()
+{
+	local var arg
+	if [ $# -eq 0 ]; then
+		return 1
+	fi
+	for arg in "$@"; do
+		if ! isdigit "$arg"; then
+			return 1
+		fi
+		var=$(( $arg % 2 ))
+		if [ "$var" -eq 1 ]; then
+			return 1
+		fi
+	done
+	return 0
+}
+
+isodd()
+{
+	local var arg
+	if [ $# -eq 0 ]; then
+		return 1
+	fi
+	for arg in "$@"; do
+		if ! isdigit "$arg"; then
+			return 1
+		fi
+		var=$(( $arg % 2 ))
+		if [ "$var" -eq 0 ]; then
+			return 1
+		fi
+	done
+	return 0
+}
+
+__isis_script_lib_have_string_isctype=1

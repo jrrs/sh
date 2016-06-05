@@ -1,0 +1,171 @@
+# $Id: current_pid 34212 2011-10-24 13:56:40Z jwm $
+
+case $__isis_script_lib_have_misc_current_pid in
+1)
+	return 0
+	;;
+esac
+
+case $ISIS_SCRIPT_LIB_ROOT in
+"")
+	_libroot=/usr/share/scriptlib
+	;;
+*)
+	_libroot=$ISIS_SCRIPT_LIB_ROOT
+	;;
+esac
+
+. ${_libroot}/string/err
+
+#
+# usage: variable=$(current_pid [ppid])
+# 
+# NOTE: assumes /proc is mounted.
+#
+# echos back the *parent* pid of the process
+# running the current_pid function.  when called from
+# a command substitution, this effectively yields the
+# pid of the process that invoked the command substitution.
+#
+# for example:
+#
+# 	isis01 0128_16:18:37 $ . ./current_pid
+# 	isis01 0128_16:18:40 $ echo $$ $PPID
+# 	23802 7324
+# 	isis01 0128_16:18:47 $ current_pid
+# 	7324
+# 	isis01 0128_16:18:49 $ pid=$(current_pid); echo $pid
+# 	23802
+#
+# if ppid is given on the commandline, the current
+# pid is echoed back with a number of underscores
+# corresponding to the current pid's depth from ppid.
+#
+# for example:
+#
+# 	isis01 0128_16:18:55 $ pid=$(current_pid 7324); echo $pid
+# 	_23802
+# 	isis01 0128_16:24:56 $ bash
+# 	isis01 0128_16:25:06 $ . ./current_pid
+# 	isis01 0128_16:25:12 $ pid=$(current_pid 7324); echo $pid
+# 	__17982
+# 	isis01 0128_16:25:17 $ bash
+# 	isis01 0128_16:25:24 $ . ./current_pid
+# 	isis01 0128_16:25:29 $ pid=$(current_pid 7324); echo $pid
+# 	___18190
+#
+# RETURNS 0 on success, nonzero on fail.
+#
+# ENVIRONMENT
+#
+# 	UNAME - used to determine operating system.  should be
+# 		identical to uname(1) output without args.  if
+# 		$UNAME is not set, a local variable with the same
+# 		name will be created and populated with uname(1)
+# 		output (which may cripple performance depending on
+# 		how often this function is called).
+#
+current_pid()
+{
+	local funcname=current_pid
+	local pid want var
+	local ppid=$1
+
+	case $UNAME in
+	"")
+		local UNAME=$(uname)
+		;;
+	esac
+
+	case $ppid in
+
+	*[!0-9]*)
+		return 1
+		;;
+
+	"")
+		case $UNAME in
+		Linux)
+			if ! read var </proc/self/stat; then
+				return 1
+			fi
+			# get fourth field
+			var=${var##*) ? }
+			var=${var%% *}
+			;;
+
+		OpenBSD)
+			if ! read var </proc/self/status; then
+				return 1
+			fi
+			var=${var% * * * * * * * * * *}
+			var=${var##* }
+			;;
+
+		SunOS)
+			if ! var=$(od -d -j 14 -N 2 /proc/self/status | cut -sf 2 -d' '); then
+				return 1
+			fi
+			;;
+		esac
+
+		pid=$var
+		;;
+
+	*)
+		want=self
+
+		while :; do
+
+			case $UNAME in
+			Linux)
+				if ! read var </proc/$want/stat; then
+					return 1
+				fi
+				# get fourth field
+				var=${var##*) ? }
+				var=${var%% *}
+				;;
+
+			OpenBSD)
+				if ! read var </proc/$want/status; then
+					return 1
+				fi
+				var=${var% * * * * * * * * * *}
+				var=${var##* }
+				;;
+
+			SunOS)
+				if ! var=$(od -d -j 14 -N 2 /proc/$want/status | cut -sf 2 -d' '); then
+					return 1
+				fi
+				;;
+			esac
+
+			case $var in
+			$ppid)
+				if [ -z "$pid" ]; then
+					pid=$var
+				fi
+				break
+				;;
+			*)
+				if [ -z "$pid" ]; then
+					pid=_$var
+				else
+					pid=_${pid}
+				fi
+				;;
+			esac
+
+			want=$var
+
+		done
+		;;
+	esac
+
+	echo "$pid"
+	return 0
+}
+
+__isis_script_lib_have_misc_current_pid=1
