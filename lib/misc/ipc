@@ -1,5 +1,3 @@
-# $Id: ipc 34212 2011-10-24 13:56:40Z jwm $
-
 # Copyright (c) 2008 jared rr spiegel <jrrs@ice-nine.org>
 #
 # Permission to use, copy, modify, and distribute this software for any
@@ -14,18 +12,18 @@
 # ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-case $__isis_script_lib_have_misc_ipc in
+case $__script_lib_have_misc_ipc in
 1)
 	return 0
 	;;
 esac
 
-case $ISIS_SCRIPT_LIB_ROOT in
+case $SCRIPT_LIB_ROOT in
 "")
 	_libroot=/usr/share/scriptlib
 	;;
 *)
-	_libroot=$ISIS_SCRIPT_LIB_ROOT
+	_libroot=$SCRIPT_LIB_ROOT
 	;;
 esac
 
@@ -828,4 +826,4 @@ _ipc_child()
 	return 0
 }
 
-__isis_script_lib_have_misc_ipc=1
+__script_lib_have_misc_ipc=1
