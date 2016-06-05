@@ -26,9 +26,12 @@ esac
 #	if CHILD_MAX is non numeric, such as 'undefined',
 #	the max defaults to 127.
 #
-# IPC_INIT() performs preliminaries and sanity checks, and fledges out tmpdir
-# with the required IPC hierarchy.  it is recommended that tmpdir
-# not be used by anything else in the script.
+# returns 0 on success (IPC safe to use)
+# returns 1 on error (IPC not safe to use)
+#
+# IPC_INIT() performs preliminaries and sanity checks, and populates
+# tmpdir with the required IPC hierarchy.  it is recommended that tmpdir
+# not be used by anything else.
 #
 # IPC_INIT() will drop a file in tmpdir named ``info'' and source it
 # automatically, thus setting the following parameters:
@@ -42,9 +45,6 @@ esac
 #	the pid of the process who called IPC_INIT.
 # IPC_CONCURRENCY
 #	the value of concurrency given to IPC_INIT.
-#
-# returns 0 on success (IPC safe to use after sourcing ``info'' file)
-# returns 1 on error (IPC not safe to use)
 #
 # WARNING WWAARRNNIINNGG WARNING
 # ------- ------- -------
@@ -67,10 +67,9 @@ IPC_INIT()
 	local default_child_max=127
 	local default_concurrency=1
 
-	local child_max
-	local concurrency
+	local child_max concurrency
 	local current_pid
-	local pd rd ed
+	local pending_dir running_dir ended_dir
 	local tmpdir
 
 	tmpdir=$1
@@ -119,17 +118,17 @@ IPC_INIT()
 		return 1
 	fi
 
-	pd="$tmpdir/pending"
-	rd="$tmpdir/running"
-	ed="$tmpdir/ended"
-	if ! mkdir -- "$pd" "$rd" "$ed"; then
+	pending_dir="$tmpdir/pending"
+	running_dir="$tmpdir/running"
+	ended_dir="$tmpdir/ended"
+	if ! mkdir -- "$pending_dir" "$running_dir" "$ended_dir"; then
 		warnx "$funcname(): failed to populate tmpdir: '$tmpdir'"
 		return 1
 	fi
 
 	# drop the info file down
 	cat > "$tmpdir/info" <<- EOT
-		readonly IPC_PENDING_DIR=$pd
+		readonly IPC_PENDING_DIR=$pending_dir
 		readonly IPC_RUNNING_DIR=$rd
 		readonly IPC_ENDED_DIR=$ed
 		readonly IPC_MASTER=$current_pid
