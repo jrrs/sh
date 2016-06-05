@@ -129,8 +129,8 @@ IPC_INIT()
 	# drop the info file down
 	cat > "$tmpdir/info" <<- EOT
 		readonly IPC_PENDING_DIR=$pending_dir
-		readonly IPC_RUNNING_DIR=$rd
-		readonly IPC_ENDED_DIR=$ed
+		readonly IPC_RUNNING_DIR=$running_dir
+		readonly IPC_ENDED_DIR=$ended_dir
 		readonly IPC_MASTER=$current_pid
 		readonly IPC_CONCURRENCY=$concurrency
 		export IPC_PENDING_DIR IPC_RUNNING_DIR IPC_ENDED_DIR
