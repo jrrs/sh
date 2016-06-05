@@ -62,7 +62,8 @@ IPC_INIT()
 {
 	local funcname=IPC_INIT
 	local usage="$funcname(): usage: $funcname() tmpdir [concurrency]"
-	local p t c m
+	local p t c
+	local child_max
 	local pd rd ed
 
 	t=$1
@@ -89,16 +90,16 @@ IPC_INIT()
 		warn EINVAL "$funcname(): concurrency: '$c'"
 		return 1
 	fi
-	if ! m=$(getconf CHILD_MAX); then
+	if ! child_max=$(getconf CHILD_MAX); then
 		warnx "$funcname(): failed to check getconf(1)"
 		return 1
 	fi
-	if ! isdigit "$m"; then
-		m=127
+	if ! isdigit "$child_max"; then
+		child_max=127
 	fi
-	if [ $c -gt $m ]; then
-		warnx "$funcname(): limiting concurrency: '$c' to CHILD_MAX: '$m'"
-		c=$m
+	if [ $c -gt $child_max ]; then
+		warnx "$funcname(): limiting concurrency: '$c' to CHILD_MAX: '$child_max'"
+		c=$child_max
 	fi
 
 	if ! p=$(current_pid); then
