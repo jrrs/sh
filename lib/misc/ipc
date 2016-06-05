@@ -72,6 +72,10 @@ IPC_INIT()
 	local pending_dir running_dir ended_dir
 	local tmpdir
 
+	# enforce a predictable sorting order critical for pathnames
+	# later
+	LC_ALL=C
+
 	# file globbing must be active
 	case $- in
 	*f*)
@@ -162,7 +166,7 @@ IPC_INIT()
 # individually checks $IPC_PENDING_DIR and $IPC_RUNNING_DIR for any pid
 # files, sends a kill to everything it finds in there.
 #
-# it will iterate over them until they are gone.
+# TODO: iterate over them until they are gone.
 #
 # returns 0 on success
 # returns 1 on error
@@ -171,109 +175,76 @@ IPC_KILL()
 {
 	local funcname=IPC_KILL
 	local usage="$funcname(): usage: $funcname"
-	local k s dir
+
+	local dir
+	local kill_list
 
 	# child files are PIDs with an underscore prefix representing how
 	# many generations deep the child is.
 	local child
 	
-	if [ -z "$IPC_PENDING_DIR" ]; then
-		warnx "$funcname(): \$IPC_PENDING_DIR null"
-		return 1
-	fi
-	if [ ! -d "$IPC_PENDING_DIR" ]; then
-		warn ENOTDIR "$funcname(): \$IPC_PENDING_DIR: '$IPC_PENDING_DIR'"
-	else
-		while :; do
-			s=0
-			for child in "$IPC_PENDING_DIR/"*; do
-				case $child in
-				*"*")
-					debug 2 "$funcname(): found an *"
-					continue
-					;;
-				esac
-				c=${c##*/}
+	for dir in $IPC_PENDING_DIR $IPC_RUNNING_DIR; do
 
-				# chop off leading child depth markers
-				while :; do
-					case $child in
-					_*)
-						child=${child##*_}
-						debug 2 "$funcname(): chopped '_' off \$child: '$child'
-						continue
-						;;
-					esac
-					break
-				done
+		if [ -z "$dir" ]; then
+			warnx "$funcname(): null directory given"
+			return 1
+		fi
+		if [ ! -d "$dir" ]; then
+			warn ENOTDIR "$funcname(): '$dir'"
+			continue
+		fi
 
-				case $child in
-				$IPC_MASTER)
-					warnx "$funcname(): \$IPC_MASTER seen in \$IPC_PENDING_DIR, skipping"
-					continue
-					;;
-				esac
+		for child in "$dir/"*; do
+			case $child in
+			*"*")
+				# no files in the dir to glob
+				debug 2 "$funcname(): found a bare *: '$child'; empty '$dir'?"
+				continue 2
+				;;
+			esac
+			child=${child##*/} # basename
 
-				case ${#k} in
-				0)
-					k=$child
-					;;
-				*)
-					k="$child $k"
-					;;
-				esac
-				debug 2 "$funcname(): \$k: '$k'"
-				s=$(( $s + 1 ))
+			# chop off leading child depth markers
+			# for now, we can eliminate them entirely, but eventually
+			# we'll have to consider their length to translate that to
+			# depth away from parent.
+			case $child in
+			_*)
+				child=${child##*_}
+				debug 2 "$funcname(): chopped '_' off \$child: '$child'"
+				;;
+			esac
 
-			done
-			if [ $s -eq 0 ]; then
-				break
-			fi
-			kill $k || true
+			case $child in
+			$IPC_MASTER)
+				warnx "$funcname(): \$IPC_MASTER seen in '$dir'"
+				# XXX: should not happen?
+				return 1
+				;;
+			esac
 
+			# this is a number test instead of a -z against the string
+			# as the latter is slower as the length of the string grows
+			case ${#kill_list} in
+			0)
+				kill_list=$child
+				;;
+			*)
+				# prepending to the list ensures children with
+				# highest generational depth are first
+				kill_list="$child $kill_list"
+				;;
+			esac
+			debug 2 "$funcname(): \$kill_list: '$kill_list'"
 		done
-	fi
-	if [ -z "$IPC_RUNNING_DIR" ]; then
-		warnx "$funcname(): \$IPC_RUNNING_DIR null"
-		return 1
-	fi
-	if [ ! -d "$IPC_RUNNING_DIR" ]; then
-		warn ENOTDIR "$funcname(): \$IPC_PENDING_DIR: '$IPC_PENDING_DIR'"
-	else
-		while :; do
-			s=0
-			for child in "$IPC_RUNNING_DIR/"*; do
-				case $child in
-				*"*")
-					continue
-					;;
-				esac
-				child=${child##*/}
 
-				case $child in
-				$IPC_MASTER)
-					warnx "$funcname(): \$IPC_MASTER seen in \$IPC_RUNNING_DIR, skipping"
-					continue
-					;;
-				esac
+		if [ -z "$kill_list" ]; then
+			continue
+		fi
+		kill $kill_list || true
 
-				case ${#k} in
-				0)
-					k=$child
-					;;
-				*)
-					k="$child $k"
-					;;
-				esac
-				s=$(( $s + 1 ))
+	done
 
-			done
-			if [ $s -eq 0 ]; then
-				break
-			fi
-			kill $k || true
-		done
-	fi
 	return 0
 }
 
