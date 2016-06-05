@@ -23,8 +23,8 @@ esac
 # tmpdir - a writeable directory for IPC_* functions to perform work in.
 # concurrency - maximum child concurrency for this IPC_INIT()'ed group
 #	of processes.  valid range is 1 - CHILD_MAX.  default is 1. 
-#	if CHILD_MAX is non numeric, such as on filter02/amd64 right now
-#	where it is 'undefined' (GO GNU!), the max defaults to 127.
+#	if CHILD_MAX is non numeric, such as 'undefined',
+#	the max defaults to 127.
 #
 # IPC_INIT() performs preliminaries and sanity checks, and fledges out tmpdir
 # with the required IPC hierarchy.  it is recommended that tmpdir
@@ -63,6 +63,7 @@ IPC_INIT()
 	local usage="$funcname(): usage: $funcname() tmpdir [concurrency]"
 	local p t
 	local concurrency
+	local default_child_max=127
 	local child_max
 	local pd rd ed
 
@@ -95,7 +96,7 @@ IPC_INIT()
 		return 1
 	fi
 	if ! isdigit "$child_max"; then
-		child_max=127
+		child_max=$default_child_max
 	fi
 	if [ $concurrency -gt $child_max ]; then
 		warnx "$funcname(): limiting concurrency: '$concurrency' to CHILD_MAX: '$child_max'"
