@@ -53,35 +53,36 @@ esac
 # ``if ! err=$(IPC_INIT "$tmpdir"); then echo $err; fi'').
 # as this will taint the value current_pid() returns for IPC_MASTER.
 # naturally, it is perfectly fine to invoke it without a command substitution
-# (eg: ``if ! IPC_INIT "$tmpdir"; then error cleanup; fi'').  NOTE that this
-# situation is precisely why IPC_INIT() doesn't do something useful like
-# echo back the full path to the info file, which would open the door for
-# nice situations like "IPC_INIT $(mktemp -d)" or the eval commonly seen
-# with ssh-agent.  c'est la vie.
+# (eg: ``if ! IPC_INIT "$tmpdir"; then error cleanup; fi'').
+# NOTE: this situation is precisely why IPC_INIT() doesn't do something
+# useful like emit the full path to the info file, which would open the door
+# for nice situations like "IPC_INIT $(mktemp -d)" or the eval commonly seen
+# with ssh-agent(1).  c'est la vie.
 #
 IPC_INIT()
 {
 	local funcname=IPC_INIT
 	local usage="$funcname(): usage: $funcname() tmpdir [concurrency]"
-	local p t
-	local concurrency
 	local default_child_max=127
+	local p
+	local concurrency
 	local child_max
+	local tmpdir
 	local pd rd ed
 
-	t=$1
-	if [ -z "$t" ]; then
+	tmpdir=$1
+	if [ -z "$tmpdir" ]; then
 		warn EINVAL "$funcname(): null tmpdir"
 		warnx "$usage"
 		return 1
 	fi
-	if [ ! -d "$t" ]; then
-		warn ENOTDIR "$funcname(): tmpdir: '$t'"
+	if [ ! -d "$tmpdir" ]; then
+		warn ENOTDIR "$funcname(): tmpdir: '$tmpdir'"
 		warnx "$usage"
 		return 1
 	fi
-	if [ ! -w "$t" ]; then
-		warn EACCES "$funcname(): tmpdir: '$t'"
+	if [ ! -w "$tmpdir" ]; then
+		warn EACCES "$funcname(): tmpdir: '$tmpdir'"
 		return 1
 	fi
 
@@ -110,21 +111,21 @@ IPC_INIT()
 		return 1
 	fi
 
-	if [ -e "$t/info" ]; then
-		warnx "$funcname(): stale tmpdir: '$t', already has info file"
+	if [ -e "$tmpdir/info" ]; then
+		warnx "$funcname(): stale tmpdir: '$tmpdir', already has info file"
 		return 1
 	fi
 
-	pd="$t/pending"
-	rd="$t/running"
-	ed="$t/end"
+	pd="$tmpdir/pending"
+	rd="$tmpdir/running"
+	ed="$tmpdir/end"
 	if ! mkdir -- "$pd" "$rd" "$ed"; then
-		warnx "$funcname(): failed to populate tmpdir: '$t'"
+		warnx "$funcname(): failed to populate tmpdir: '$tmpdir'"
 		return 1
 	fi
 
 	# drop the info file down
-	cat > "$t/info" <<- EOT
+	cat > "$tmpdir/info" <<- EOT
 		readonly IPC_PENDING_DIR=$pd
 		readonly IPC_RUNNING_DIR=$rd
 		readonly IPC_ENDED_DIR=$ed
@@ -142,7 +143,7 @@ IPC_INIT()
 		;;
 	esac
 
-	. "$t/info"
+	. "$tmpdir/info"
 	return 0
 }
 
@@ -464,7 +465,7 @@ alias IPC_RETURN='
 #
 # _ipc_getnumchildren dir
 #
-# echos the number of children in $dir.
+# emits the number of children in $dir.
 #
 # returns 0 on successful check
 # returns 1 on error
@@ -496,7 +497,7 @@ _ipc_getnumchildren()
 #
 # _ipc_clean_ended
 #
-# echos back the number of children it cleaned up (may be 0) and returns 0
+# emits the number of children it cleaned up (may be 0) and returns 0
 # returns 1 on error
 #
 _ipc_clean_ended()
@@ -543,7 +544,7 @@ _ipc_clean_ended()
 # to break them out of IPC_START.
 #
 # returns 1 on error
-# returns 0 otherwise and echos back # of children it sent SIGCONT to
+# returns 0 otherwise and emits # of children it sent SIGCONT to
 #
 # XXX really should take ARG_MAX into account
 #
@@ -644,8 +645,8 @@ _ipc_start_n_children()
 # what it finds to be running 
 #
 # returns 1 on error
-# returns 0 on success and echoes back number of children it thinks it
-#           started.  echos '-1' to indicate that we are already
+# returns 0 on success and emits number of children it thinks it
+#           started.  emits '-1' to indicate that we are already
 #	    at max IPC_CONCURRENCY and no attempt to start children was made.
 #
 _ipc_start()
@@ -689,7 +690,7 @@ _ipc_start()
 # usage: _ipc_end
 #
 # runs _ipc_clean_ended() until it reports no children
-# were cleaned, then echos back the total number of children it cleaned up.
+# were cleaned, then emits the total number of children it cleaned up.
 #
 _ipc_end()
 {
