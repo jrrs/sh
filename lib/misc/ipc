@@ -166,7 +166,8 @@ IPC_INIT()
 # individually checks $IPC_PENDING_DIR and $IPC_RUNNING_DIR for any pid
 # files, sends a kill to everything it finds in there.
 #
-# TODO: iterate over them until they are gone.
+# TODO: refresh my memory on how the files move from one dir to another and
+#       get unlinked when a process is totally done/reaped
 #
 # returns 0 on success
 # returns 1 on error
