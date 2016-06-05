@@ -63,13 +63,15 @@ IPC_INIT()
 {
 	local funcname=IPC_INIT
 	local usage="$funcname(): usage: $funcname() tmpdir [concurrency]"
+
 	local default_child_max=127
 	local default_concurrency=1
-	local p
-	local concurrency
+
 	local child_max
-	local tmpdir
+	local concurrency
+	local current_pid
 	local pd rd ed
+	local tmpdir
 
 	tmpdir=$1
 	if [ -z "$tmpdir" ]; then
@@ -107,7 +109,7 @@ IPC_INIT()
 		concurrency=$child_max
 	fi
 
-	if ! p=$(current_pid); then
+	if ! current_pid=$(current_pid); then
 		warnx "$funcname(): failed current_pid()"
 		return 1
 	fi
@@ -130,7 +132,7 @@ IPC_INIT()
 		readonly IPC_PENDING_DIR=$pd
 		readonly IPC_RUNNING_DIR=$rd
 		readonly IPC_ENDED_DIR=$ed
-		readonly IPC_MASTER=$p
+		readonly IPC_MASTER=$current_pid
 		readonly IPC_CONCURRENCY=$concurrency
 		export IPC_PENDING_DIR IPC_RUNNING_DIR IPC_ENDED_DIR
 		export IPC_MASTER IPC_CONCURRENCY
