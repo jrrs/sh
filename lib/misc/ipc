@@ -176,6 +176,7 @@ IPC_KILL()
 	local funcname=IPC_KILL
 	local usage="$funcname(): usage: $funcname"
 
+	local canary
 	local dir
 	local kill_list
 
@@ -183,66 +184,78 @@ IPC_KILL()
 	# many generations deep the child is.
 	local child
 	
-	for dir in $IPC_PENDING_DIR $IPC_RUNNING_DIR; do
+	while :; do
+		canary=0
 
-		if [ -z "$dir" ]; then
-			warnx "$funcname(): null directory given"
-			return 1
-		fi
-		if [ ! -d "$dir" ]; then
-			warn ENOTDIR "$funcname(): '$dir'"
-			continue
-		fi
+		for dir in $IPC_PENDING_DIR $IPC_RUNNING_DIR; do
 
-		for child in "$dir/"*; do
-			case $child in
-			*"*")
-				# no files in the dir to glob
-				debug 2 "$funcname(): found a bare *: '$child'; empty '$dir'?"
-				continue 2
-				;;
-			esac
-			child=${child##*/} # basename
+			kill_list=
 
-			# chop off leading child depth markers
-			# for now, we can eliminate them entirely, but eventually
-			# we'll have to consider their length to translate that to
-			# depth away from parent.
-			case $child in
-			_*)
-				child=${child##*_}
-				debug 2 "$funcname(): chopped '_' off \$child: '$child'"
-				;;
-			esac
-
-			case $child in
-			$IPC_MASTER)
-				warnx "$funcname(): \$IPC_MASTER seen in '$dir'"
-				# XXX: should not happen?
+			if [ -z "$dir" ]; then
+				warnx "$funcname(): null directory given"
 				return 1
-				;;
-			esac
+			fi
+			if [ ! -d "$dir" ]; then
+				warn ENOTDIR "$funcname(): '$dir'"
+				continue
+			fi
 
-			# this is a number test instead of a -z against the string
-			# as the latter is slower as the length of the string grows
-			case ${#kill_list} in
-			0)
-				kill_list=$child
-				;;
-			*)
-				# prepending to the list ensures children with
-				# highest generational depth are first
-				kill_list="$child $kill_list"
-				;;
-			esac
-			debug 2 "$funcname(): \$kill_list: '$kill_list'"
+			for child in "$dir/"*; do
+				case $child in
+				*"*")
+					# no files in the dir to glob
+					debug 2 "$funcname(): found a bare *: '$child'; empty '$dir'?"
+					continue 2
+					;;
+				esac
+				child=${child##*/} # basename
+
+				# chop off leading child depth markers
+				# for now, we can eliminate them entirely, but eventually
+				# we'll have to consider their length to translate that to
+				# depth away from parent.
+				case $child in
+				_*)
+					child=${child##*_}
+					debug 2 "$funcname(): chopped '_' off \$child: '$child'"
+					;;
+				esac
+
+				case $child in
+				$IPC_MASTER)
+					warnx "$funcname(): \$IPC_MASTER seen in '$dir'"
+					# XXX: should not happen?
+					return 1
+					;;
+				esac
+
+				# this is a number test instead of a -z against the string
+				# as the latter is slower as the length of the string grows
+				case ${#kill_list} in
+				0)
+					kill_list=$child
+					;;
+				*)
+					# prepending to the list ensures children with
+					# highest generational depth are first
+					kill_list="$child $kill_list"
+					;;
+				esac
+				debug 2 "$funcname(): \$kill_list: '$kill_list'"
+			done
+
+			if [ -z "$kill_list" ]; then
+				continue
+			fi
+			canary=$(( canary | 1 ))
+			kill $kill_list || true
 		done
 
-		if [ -z "$kill_list" ]; then
+		if [ $canary -gt 0 ]; then
+			# work was done in at least one of the pending/running dirs
 			continue
 		fi
-		kill $kill_list || true
-
+		break
 	done
 
 	return 0
