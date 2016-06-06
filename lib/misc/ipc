@@ -280,6 +280,11 @@ IPC2_MASTER()
 		read pid message <"$fifo"
 		debug 1 "$funcname():  % % % % %% %  ok i read it: '$fifo'"
 		case $message in
+		END)
+			debug 4 "$funcname(): found ended \$pid: '$pid'"
+			children=$(( children - 1 ))
+			ended_total=$(( ended_total + 1 ))
+			;;
 		START)
 			# add PID to tail of pendings queue
 			case $pendings in
@@ -290,11 +295,6 @@ IPC2_MASTER()
 				pendings="$pendings $pid"
 				;;
 			esac
-			;;
-		END)
-			debug 4 "$funcname(): found ended \$pid: '$pid'"
-			children=$(( children - 1 ))
-			ended_total=$(( ended_total + 1 ))
 			;;
 		WAIT)
 			# any newly seen "START"s on the fifo will be killed,
