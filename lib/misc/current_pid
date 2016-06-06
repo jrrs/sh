@@ -19,11 +19,21 @@ esac
 # usage: variable=$(current_pid [ppid])
 # 
 # NOTE: assumes /proc is mounted.
+# NOTE: this is for subshells
 #
-# echos back the *parent* pid of the process
-# running the current_pid function.  when called from
-# a command substitution, this effectively yields the
-# pid of the process that invoked the command substitution.
+# emits the *parent* pid of the process
+# running the current_pid function.
+#
+# when called from a command substitution/subshell, this
+# effectively yields the pid of the process that invoked the
+# command substitution/subshell.
+#
+# said another way, '$$' in subshells is always the PID of
+# the original process, not the subshell.  to get the subshell's
+# *own* PID into a variable, one has to do a command subsitution
+# which is a further subshell, so we need that one's *parent*
+# to provide the PID of the caller - the subshell who wants to
+# know its PID.
 #
 # for example:
 #
@@ -51,11 +61,6 @@ esac
 # 	host01 0128_16:25:24 $ . ./current_pid
 # 	host01 0128_16:25:29 $ pid=$(current_pid 7324); echo $pid
 # 	___18190
-#
-# if the ppid given on the commandline is "self", returns the actual
-# pid of the process.  this is useful specifically for subshells to
-# be able to get their own pid, as for subshells, '$$' is the original
-# shell (not the parent).
 #
 # RETURNS 0 on success, nonzero on fail.
 #
@@ -114,7 +119,7 @@ current_pid()
 		pid=$var
 		;;
 
-	*[0-9]* | self)
+	*[0-9]*)
 		want=self
 
 		while :; do
@@ -125,13 +130,6 @@ current_pid()
 				if ! read var </proc/$want/stat; then
 					return 1
 				fi
-				case $ppid in
-				self)
-					# get only first field
-					pid=${var%% *}
-					break
-					;;
-				esac
 				# get fourth field
 				var=${var##*) ? }
 				var=${var%% *}
@@ -141,31 +139,14 @@ current_pid()
 				if ! read var </proc/$want/status; then
 					return 1
 				fi
-				case $ppid in
-				self)
-					warnx "$funcname(): TODO IMPLEMENT \$LINENO: '$LINENO'"
-					return 1
-					;;
-				*)
-					
-					var=${var% * * * * * * * * * *}
-					var=${var##* }
-					;;
-				esac
+				var=${var% * * * * * * * * * *}
+				var=${var##* }
 				;;
 
 			SunOS)
-				case $ppid in
-				self)
-					warnx "$funcname(): TODO IMPLEMENT \$LINENO: '$LINENO'"
+				if ! var=$(od -d -j 14 -N 2 /proc/$want/status | cut -sf 2 -d' '); then
 					return 1
-					;;
-				*)	
-					if ! var=$(od -d -j 14 -N 2 /proc/$want/status | cut -sf 2 -d' '); then
-						return 1
-					fi
-					;;
-				esac
+				fi
 				;;
 			*)
 				warnx "$funcname(): unknown \$UNAME: '$UNAME'"
