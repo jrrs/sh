@@ -169,7 +169,7 @@ IPC2_START()
 	local default_concurrency=1
 
 	local child_max concurrency
-	local start_fifo end_fifo
+	local fifo
 	local tmpdir
 
 	tmpdir=$1
@@ -213,19 +213,18 @@ IPC2_START()
 		return 1
 	fi
 
-	start_fifo="$tmpdir/start"
-	end_fifo="$tmpdir/end"
-	if ! mkfifo -- "$start_fifo" "$end_fifo"; then
+	fifo="$tmpdir/fifo"
+	if ! mkfifo -- "$fifo"; then
 		warnx "$funcname(): failed to populate tmpdir: '$tmpdir'"
 		return 1
 	fi
 
 	# drop the info file down
 	cat > "$tmpdir/info" <<- EOT
-		readonly IPC_START_FIFO=$start_fifo
-		readonly IPC_END_FIFO=$end_fifo
+		readonly IPC_FIFO=$fifo
+		export IPC_FIFO
 		readonly IPC_CONCURRENCY=$concurrency
-		export IPC_START_FIFO IPC_END_FIFO IPC_CONCURRENCY
+		export IPC_CONCURRENCY
 	EOT
 
 	case $BASH_VERSION in
@@ -247,17 +246,19 @@ IPC2_MASTER()
 {
 	local funcname=IPC2_MASTER
 	local children=0
-	local started_total=0
-	local ended_total=0
 	local concurrency=$IPC_CONCURRENCY
+	local ended_total=0
+	local flush
+	local message
+	local pendings pending_child
 	local pid pids
-	
-	if [ ! -p "$IPC_START_FIFO" ]; then
-		warnx "$funcname(): invalid \$IPC_START_FIFO: '$IPC_START_FIFO'"
-		return 1
-	fi
-	if [ ! -p "$IPC_END_FIFO" ]; then
-		warnx "$funcname(): invalid \$IPC_END_FIFO: '$IPC_END_FIFO'"
+	local signal=CONT
+	local started_total=0
+	local teardown=0
+	local wait_requestors
+
+	if [ ! -p "$IPC_FIFO" ]; then
+		warnx "$funcname(): invalid \$IPC_FIFO: '$IPC_FIFO'"
 		return 1
 	fi
 	if ! isdigit "$concurrency"; then
@@ -265,89 +266,148 @@ IPC2_MASTER()
 		return 1
 	fi
 
-	# - children less than concurrency?
-	#	- look for/unblock started children one at a time
-	#	- if we got the 'DONE' message, set sabotage $concurrency
-	#	  to '-1' and repeat loop
-	#	- add 1 to $children
-	#	- repeat loop	
-	# - if there are nonzero running $children, look for/unblock them
-	# - decrement $children by however many we found
-	# - if $concurrency is -1 and $children is 0, we're
-	#   done here
 	while :; do
 		debug 10 "$funcname(): \$children: '$children'"
 		debug 12 "$funcname(): \$started_total: '$started_total', \$ended_total: '$ended_total'"
-		if [ $children -lt $concurrency ]; then
-			# BLOCK
-			debug 15 "$funcname(): BLOCKING READ ON +++++++++++ START FIFO +++++++++++"
-			read pid <"$IPC_START_FIFO"
-			debug 10 "$funcname(): started \$pid: '$pid'"
-			echo "$pid" >>ipcdir/${funcname}_start_pids_received
-			case $pid in
-			DONE)
-				debug 5 "$funcname(): received 'DONE' message, setting \$concurrency to -1"
-				concurrency=-1
-				continue
-				;;
-			esac
-			children=$(( children + 1 ))
-			started_total=$(( started_total + 1 ))
-			continue
-			
-		fi
-		# BLOCK
-		if [ $children -gt 0 ]; then
-			debug 15 "$funcname(): BLOCKING READ ON =========== END FIFO =============="
-			read pids <"$IPC_END_FIFO"
-			debug 10 "$funcname(): ended \$pids: '$pids'"
-			for pid in $pids; do
-				children=$(( children - 1 ))
-				ended_total=$(( ended_total + 1 ))
-				echo "$pid" >>ipcdir/${funcname}_end_pids_received
-			done
-		fi
-		if [ $children -le 0 ] && [ $concurrency -eq -1 ]; then
-			debug 10 "$funcname(): break"
+		if [ $teardown -gt 0 ] && [ $children -eq 0 ]; then
+			debug 2 "$funcname(): holy shit we are done! @&@ &@ &@& @& @&&@&@ @"
 			break
 		fi
+		# if we're in teardown mode we still need to read to find "END"
+		# messages for children we started
+		debug 1 "$funcname(): % % % % % %% % here i go reading the fifo: '$fifo'"
+		# BLOCK
+		read pid message <"$fifo"
+		debug 1 "$funcname():  % % % % %% %  ok i read it: '$fifo'"
+		case $message in
+		START)
+			# add PID to tail of pendings queue
+			case $pendings in
+			"")
+				pendings=$pid
+				;;
+			*)
+				pendings="$pendings $pid"
+				;;
+			esac
+			;;
+		END)
+			debug 4 "$funcname(): found ended \$pid: '$pid'"
+			children=$(( children - 1 ))
+			ended_total=$(( ended_total + 1 ))
+			;;
+		WAIT)
+			# any newly seen "START"s on the fifo will be killed,
+			# not stopped.
+			signal=KILL
+			teardown=1
+			debug 5 "$funcname(): received WAIT from requestor \$pid: '$pid'"
+			case $wait_requestors in
+			"")
+				wait_requestors=$pid
+				;;
+			*)
+				wait_requestors="$wait_requestors $pid"
+				;;
+			esac
+			;;
+		esac
+
+		while [ $children -lt $concurrency ]; do
+			# flush pending children first
+			if [ ${#pendings} -gt 0 ]; then
+				pending_child=${pendings%% *}
+				debug 9 "$funcname(): flushing \$pending_child '$pending_child'"
+				debug 20 "$funcname(): kill -${signal} $pending_child"
+				kill -"$signal" "$pending_child"
+				# remove pending_child from front of pendings list
+				# and any trailing space
+				pendings=${pendings#${pending_child}}
+				pendings=${pendings# }
+				debug 9 "$funcname(): flushed \$pending_child '$pending_child'"
+				if [ $teardown -eq 0 ]; then
+					# we don't decrement $children in the teardown
+					# case because $children refers to how many
+					# we sent the CONT signal to, not how many
+					# came through the fifo with a START.
+					children=$(( children + 1 ))
+					started_total=$(( started_total + 1 ))
+				fi
+				continue
+			fi
+			break
+		done
+			
 	done
 
 	debug 18 "$funcname(): \$started_total: '$started_total', \$ended_total: '$ended_total'"
 
+	if [ ${#wait_requestors} -eq 0 ]; then
+		warnx "$funcname(): exited work loop but have null \$wait_requestors."
+		return 1
+	fi
+	for pid in $wait_requestors; do
+		debug 14 "$funcname(): sending CONT to wait requestor: '$pid'"
+		kill -CONT "$pid"
+	done
+	debug 1 "$funcname() holy shit total victory"
 	return 0
 }
 
 IPC2_END()
 {
 	local funcname=IPC2_END
-	debug 13 "$funcname(): sending DONE to \$IPC_START_FIFO: '$IPC_START_FIFO'"
-	if ! echo DONE >>"$IPC_START_FIFO"; then
-		warnx "$funcname(): failed sending DONE to '$IPC_START_FIFO'"
-		return 1
-	fi
-	debug 10 "$funcname(): sent DONE to \$IPC_START_FIFO: '$IPC_START_FIFO'"
+	local pid
+
+	# force a subshell so we can stop our own instantiation
+	# without otherwise stopping the whole script
+	(
+		if ! pid=$(current_pid); then
+			warnx "$funcname(): failed current_pid(), this child is worthless"
+			return 1
+		fi
+
+		debug 13 "$funcname(): sending WAIT to \$IPC_FIFO: '$IPC_FIFO'"
+		if ! echo "$pid WAIT" >>"$IPC_FIFO"; then
+			warnx "$funcname(): failed sending WAIT to '$IPC_FIFO'"
+			return 1
+		fi
+		echo "$pid WAIT $funcname" >>"ipcdir/log"
+		debug 8 "$funcname(): OK I AM PAUSING MYSELF NOW TOO!"
+		kill -STOP "$pid"
+		debug 8 "$funcname(): YAYA I AM RESUMED!"
+	);
+
 	return 0
 }
 
 IPC2_CHILD()
 {
 	local funcname=IPC2_CHILD
-	local p=$RANDOM
+	local pid
 
 	{
-		debug 14 "$funcname(): _____ $p _________ HI THERE I AM PUTTING '$p' INTO '$IPC_START_FIFO' NOW"
-		echo "$p" >>"$IPC_START_FIFO"
-		echo "$p" >>"ipcdir/${funcname}_start_pids_sent"
-		debug 14 "$funcname(): _____ $p _________ OK THAT WORKED"
+
+		if ! pid=$(current_pid); then
+			warnx "$funcname(): failed current_pid(), this child is worthless"
+			return 1
+		fi
+			
+		debug 14 "$funcname(): _____ $pid _________ HI THERE I AM PUTTING '$pid' INTO '$IPC_FIFO' NOW"
+		echo "$pid START" >>"$IPC_FIFO"
+		echo "$pid START $funcname" >>"ipcdir/log"
+		debug 14 "$funcname(): _____ $pid _________ OK THAT WORKED"
+		debug 19 "$funcname():                                    &&&&&&& PAUSING MYSELF: '$pid'"
+		kill -STOP "$pid"
+		debug 19 "$funcname():                                       $$$$$$$$$$$$ I HAVE BEEN RESUMED: '$pid'"
 		# catch error
-		debug 11 "$funcname(): '$p' START: '$@'"
+		debug 11 "$funcname(): '$pid' START: '$@'"
 		eval "$@"
-		debug 11 "$funcname(): '$p' END: '$@'"
-		debug 14 "$funcname(): __!!!___ $p ___!!!______ HI THERE I AM PUTTING '$p' INTO '$IPC_END_FIFO' NOW"
-		echo "$p" >>"$IPC_END_FIFO"
-		echo "$p" >>"ipcdir/${funcname}_end_pids_sent"
-		debug 14 "$funcname(): __!!!___ $p ___!!!______ OK THAT ALSO WORKED"
+		debug 11 "$funcname(): '$pid' END: '$@'"
+		debug 14 "$funcname(): __!!!___ $pid ___!!!______ HI THERE I AM PUTTING '$pid' INTO '$IPC_FIFO' NOW"
+		echo "$pid END" >>"$IPC_FIFO"
+		echo "$pid END $funcname" >>"ipcdir/log"
+		debug 14 "$funcname(): __!!!___ $pid ___!!!______ OK THAT ALSO WORKED"
 	}&
 
 	return 0
