@@ -160,6 +160,199 @@ IPC_INIT()
 	return 0
 }
 
+IPC2_START()
+{
+	local funcname=IPC2_START
+	local usage="$funcname(): usage: $funcname() tmpdir [concurrency]"
+
+	local default_child_max=127
+	local default_concurrency=1
+
+	local child_max concurrency
+	local start_fifo end_fifo
+	local tmpdir
+
+	tmpdir=$1
+	if [ -z "$tmpdir" ]; then
+		warn EINVAL "$funcname(): null tmpdir"
+		warnx "$usage"
+		return 1
+	fi
+	if [ ! -d "$tmpdir" ]; then
+		warn ENOTDIR "$funcname(): tmpdir: '$tmpdir'"
+		warnx "$usage"
+		return 1
+	fi
+	if [ ! -w "$tmpdir" ]; then
+		warn EACCES "$funcname(): tmpdir: '$tmpdir'"
+		return 1
+	fi
+
+	concurrency=$2
+	if [ -z "$concurrency" ]; then
+		concurrency=$default_concurrency
+	fi
+	if ! isdigit "$concurrency"; then
+		warn EINVAL "$funcname(): concurrency: '$concurrency'"
+		return 1
+	fi
+	if ! child_max=$(getconf CHILD_MAX); then
+		warnx "$funcname(): failed to check getconf(1)"
+		return 1
+	fi
+	if ! isdigit "$child_max"; then
+		child_max=$default_child_max
+	fi
+	if [ $concurrency -gt $child_max ]; then
+		warnx "$funcname(): limiting concurrency: '$concurrency' to CHILD_MAX: '$child_max'"
+		concurrency=$child_max
+	fi
+
+	if [ -e "$tmpdir/info" ]; then
+		warnx "$funcname(): stale tmpdir: '$tmpdir', already has info file"
+		return 1
+	fi
+
+	start_fifo="$tmpdir/start"
+	end_fifo="$tmpdir/end"
+	if ! mkfifo -- "$start_fifo" "$end_fifo"; then
+		warnx "$funcname(): failed to populate tmpdir: '$tmpdir'"
+		return 1
+	fi
+
+	# drop the info file down
+	cat > "$tmpdir/info" <<- EOT
+		readonly IPC_START_FIFO=$start_fifo
+		readonly IPC_END_FIFO=$end_fifo
+		readonly IPC_CONCURRENCY=$concurrency
+		export IPC_START_FIFO IPC_END_FIFO IPC_CONCURRENCY
+	EOT
+
+	case $BASH_VERSION in
+	"")
+		;;
+	*)
+		shopt -s expand_aliases
+		;;
+	esac
+
+	. "$tmpdir/info"
+
+	IPC2_MASTER &
+
+	return 0
+}
+
+IPC2_MASTER()
+{
+	local funcname=IPC2_MASTER
+	local children=0
+	local started_total=0
+	local ended_total=0
+	local concurrency=$IPC_CONCURRENCY
+	local pid pids
+	
+	if [ ! -p "$IPC_START_FIFO" ]; then
+		warnx "$funcname(): invalid \$IPC_START_FIFO: '$IPC_START_FIFO'"
+		return 1
+	fi
+	if [ ! -p "$IPC_END_FIFO" ]; then
+		warnx "$funcname(): invalid \$IPC_END_FIFO: '$IPC_END_FIFO'"
+		return 1
+	fi
+	if ! isdigit "$concurrency"; then
+		warnx "$funcname(): invalid \$concurrency: '$concurrency'"
+		return 1
+	fi
+
+	# - children less than concurrency?
+	#	- look for/unblock started children one at a time
+	#	- if we got the 'DONE' message, set sabotage $concurrency
+	#	  to '-1' and repeat loop
+	#	- add 1 to $children
+	#	- repeat loop	
+	# - if there are nonzero running $children, look for/unblock them
+	# - decrement $children by however many we found
+	# - if $concurrency is -1 and $children is 0, we're
+	#   done here
+	while :; do
+		debug 10 "$funcname(): \$children: '$children'"
+		debug 12 "$funcname(): \$started_total: '$started_total', \$ended_total: '$ended_total'"
+		if [ $children -lt $concurrency ]; then
+			# BLOCK
+			debug 15 "$funcname(): BLOCKING READ ON +++++++++++ START FIFO +++++++++++"
+			read pid <"$IPC_START_FIFO"
+			debug 10 "$funcname(): started \$pid: '$pid'"
+			echo "$pid" >>ipcdir/${funcname}_start_pids_received
+			case $pid in
+			DONE)
+				debug 5 "$funcname(): received 'DONE' message, setting \$concurrency to -1"
+				concurrency=-1
+				continue
+				;;
+			esac
+			children=$(( children + 1 ))
+			started_total=$(( started_total + 1 ))
+			continue
+			
+		fi
+		# BLOCK
+		if [ $children -gt 0 ]; then
+			debug 15 "$funcname(): BLOCKING READ ON =========== END FIFO =============="
+			read pids <"$IPC_END_FIFO"
+			debug 10 "$funcname(): ended \$pids: '$pids'"
+			for pid in $pids; do
+				children=$(( children - 1 ))
+				ended_total=$(( ended_total + 1 ))
+				echo "$pid" >>ipcdir/${funcname}_end_pids_received
+			done
+		fi
+		if [ $children -le 0 ] && [ $concurrency -eq -1 ]; then
+			debug 10 "$funcname(): break"
+			break
+		fi
+	done
+
+	debug 18 "$funcname(): \$started_total: '$started_total', \$ended_total: '$ended_total'"
+
+	return 0
+}
+
+IPC2_END()
+{
+	local funcname=IPC2_END
+	debug 13 "$funcname(): sending DONE to \$IPC_START_FIFO: '$IPC_START_FIFO'"
+	if ! echo DONE >>"$IPC_START_FIFO"; then
+		warnx "$funcname(): failed sending DONE to '$IPC_START_FIFO'"
+		return 1
+	fi
+	debug 10 "$funcname(): sent DONE to \$IPC_START_FIFO: '$IPC_START_FIFO'"
+	return 0
+}
+
+IPC2_CHILD()
+{
+	local funcname=IPC2_CHILD
+	local p=$RANDOM
+
+	{
+		debug 14 "$funcname(): _____ $p _________ HI THERE I AM PUTTING '$p' INTO '$IPC_START_FIFO' NOW"
+		echo "$p" >>"$IPC_START_FIFO"
+		echo "$p" >>"ipcdir/${funcname}_start_pids_sent"
+		debug 14 "$funcname(): _____ $p _________ OK THAT WORKED"
+		# catch error
+		debug 11 "$funcname(): '$p' START: '$@'"
+		eval "$@"
+		debug 11 "$funcname(): '$p' END: '$@'"
+		debug 14 "$funcname(): __!!!___ $p ___!!!______ HI THERE I AM PUTTING '$p' INTO '$IPC_END_FIFO' NOW"
+		echo "$p" >>"$IPC_END_FIFO"
+		echo "$p" >>"ipcdir/${funcname}_end_pids_sent"
+		debug 14 "$funcname(): __!!!___ $p ___!!!______ OK THAT ALSO WORKED"
+	}&
+
+	return 0
+}
+
 #
 # usage: IPC_KILL
 #

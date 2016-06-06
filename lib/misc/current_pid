@@ -52,6 +52,11 @@ esac
 # 	host01 0128_16:25:29 $ pid=$(current_pid 7324); echo $pid
 # 	___18190
 #
+# if the ppid given on the commandline is "self", returns the actual
+# pid of the process.  this is useful specifically for subshells to
+# be able to get their own pid, as for subshells, '$$' is the original
+# shell (not the parent).
+#
 # RETURNS 0 on success, nonzero on fail.
 #
 # ENVIRONMENT
@@ -76,8 +81,8 @@ current_pid()
 	esac
 
 	case $ppid in
-
 	*[!0-9]*)
+		warnx "$funcname(): non-numeric \$ppid given: '$ppid'"
 		return 1
 		;;
 
@@ -105,12 +110,16 @@ current_pid()
 				return 1
 			fi
 			;;
+		*)
+			warnx "$funcname(): unknown \$UNAME: '$UNAME'"
+			return 1
+			;;
 		esac
 
 		pid=$var
 		;;
 
-	*)
+	*[0-9]* | self)
 		want=self
 
 		while :; do
@@ -138,9 +147,17 @@ current_pid()
 					return 1
 				fi
 				;;
+			*)
+				warnx "$funcname(): unknown \$UNAME: '$UNAME'"
+				return 1
+				;;
 			esac
 
 			case $var in
+			0)
+				# no more parents
+				break
+				;;
 			$ppid)
 				if [ -z "$pid" ]; then
 					pid=$var
