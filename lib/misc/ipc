@@ -248,45 +248,72 @@ IPC2_MASTER()
 	local children=0
 	local concurrency=$IPC_CONCURRENCY
 	local ended_total=0
+	local flag
 	local flush
 	local message
-	local pendings pending_child
+	local pendings pending_child _pendings
 	local pid pids
 	local signal=CONT
 	local started_total=0
 	local teardown=0
+	local var
 	local wait_requestors
 
-	if [ ! -p "$IPC_FIFO" ]; then
-		warnx "$funcname(): invalid \$IPC_FIFO: '$IPC_FIFO'"
-		return 1
-	fi
-	if ! isdigit "$concurrency"; then
-		warnx "$funcname(): invalid \$concurrency: '$concurrency'"
-		return 1
-	fi
-
 	while :; do
-		debug 10 "$funcname(): \$children: '$children'"
-		debug 12 "$funcname(): \$started_total: '$started_total', \$ended_total: '$ended_total'"
-		if [ $teardown -gt 0 ] && [ $children -eq 0 ]; then
-			debug 2 "$funcname(): holy shit we are done! @&@ &@ &@& @& @&&@&@ @"
-			break
-		fi
-		# if we're in teardown mode we still need to read to find "END"
-		# messages for children we started
-		debug 1 "$funcname(): % % % % % %% % here i go reading the fifo: '$fifo'"
-		# BLOCK
+		message=READ
+		debug 10 "$funcname(): [$message] \$children: '$children'"
+		debug 12 "$funcname(): [$message] \$started_total: '$started_total', \$ended_total: '$ended_total'"
+		debug 1 "$funcname(): [$message] reading fifo"
 		read pid message <"$fifo"
-		debug 1 "$funcname():  % % % % %% %  ok i read it: '$fifo'"
+		debug 1 "$funcname(): [$message] -> '$pid'"
+		debug 13 "$funcname(): [$message] logging message from '$pid'"
+		echo "$pid $message $funcname" >>"ipcdir/recvlog"
 		case $message in
 		END)
-			debug 4 "$funcname(): found ended \$pid: '$pid'"
 			children=$(( children - 1 ))
 			ended_total=$(( ended_total + 1 ))
 			;;
-		START)
+		FINISH)
+			# FINISH is the IPC2_END version of IPC2_CHILD's START.
+			# it is used to indicate a SIGSTOP'd IPC2_END process
+			# has received its SIGCONT.
+			flag=0
+			_pendings=""
+			debug 3 "$funcname(): [$message] removing \$pid '$pid' from \$wait_requestors '$wait_requestors'"
+			for var in $wait_requestors; do
+				# remove the incoming PID from the wait requestors list
+				# by making a new list populated by all the
+				# pids in $pendings other than the one we have
+				# in our hand now.
+				case $var in
+				$pid)
+					flag=1
+					;;
+				*)
+					case $_pendings in
+					"")
+						_pendings=$var
+						;;
+					*)
+						_pendings="$_pendings $var"
+						;;
+					esac
+					;;
+				esac
+			done
+			if [ $flag -eq 0 ]; then
+				# received a message for a non-pending PID.
+				# XXX: ignore this?  fail?
+				warnx "$funcname(): [$message] received message for non-pending \$pid: '$pid'"
+				return 1
+			fi
+			wait_requestors="$_pendings"
+			debug 3 "$funcname(): [$message] \$wait_requestors is now '$wait_requestors', ensure removal of \$pid: '$pid'"
+			;;
+
+		PENDING)
 			# add PID to tail of pendings queue
+			debug 3 "$funcname(): [$message] adding \$pid '$pid' to \$pendings '$pendings'"
 			case $pendings in
 			"")
 				pendings=$pid
@@ -295,13 +322,51 @@ IPC2_MASTER()
 				pendings="$pendings $pid"
 				;;
 			esac
+			debug 4 "$funcname(): [$message] \$pendings is now '$pendings', ensure addition of \$pid: '$pid'"
+			;;
+		START)
+			# PID received our SIGCONT, remove from pending list
+			flag=0
+			_pendings=""
+			debug 16 "$funcname(): [$message] removing \$pid '$pid' from \$pendings '$pendings'"
+			for var in $pendings; do
+				# remove the incoming PID from the pendings list
+				# by making a new list populated by all the
+				# pids in $pendings other than the one we have
+				# in our hand now.
+				case $var in
+				$pid)
+					flag=1
+					;;
+				*)
+					case $_pendings in
+					"")
+						_pendings=$var
+						;;
+					*)
+						_pendings="$_pendings $var"
+						;;
+					esac
+					;;
+				esac
+			done
+			if [ $flag -eq 0 ]; then
+				# received a message message for a non-pending PID.
+				# XXX: ignore this?  fail?
+				warnx "$funcname(): [$message] received message for non-pending \$pid: '$pid'"
+				return 1
+			fi
+			pendings="$_pendings"
+			debug 4 "$funcname(): [$message] \$pendings is now '$pendings', ensure removal of \$pid: '$pid'"
+			children=$(( children + 1 ))
+			started_total=$(( started_total + 1 ))
 			;;
 		WAIT)
 			# any newly seen "START"s on the fifo will be killed,
 			# not stopped.
 			signal=KILL
 			teardown=1
-			debug 5 "$funcname(): received WAIT from requestor \$pid: '$pid'"
+			debug 3 "$funcname(): [$message] adding \$pid '$pid' to \$wait_requestors '$wait_requestors'"
 			case $wait_requestors in
 			"")
 				wait_requestors=$pid
@@ -310,72 +375,105 @@ IPC2_MASTER()
 				wait_requestors="$wait_requestors $pid"
 				;;
 			esac
+			debug 4 "$funcname(): [$message] \$wait_requestors is now '$wait_requestors', ensure addition \$pid: '$pid'"
+			;;
+		*)
+			warnx "$funcname(): [$message] ERROR: unknown message"
+			return 1
 			;;
 		esac
 
-		while [ $children -lt $concurrency ]; do
-			# flush pending children first
+		message=WORK
+		debug 2 "$funcname(): [$message] looking for work"
+		if [ $teardown -eq 1 ]; then
+			debug 0 "$funcname(): [$message] teardown mode confirmed"
 			if [ ${#pendings} -gt 0 ]; then
-				pending_child=${pendings%% *}
-				debug 9 "$funcname(): flushing \$pending_child '$pending_child'"
-				debug 20 "$funcname(): kill -${signal} $pending_child"
-				kill -"$signal" "$pending_child"
-				# remove pending_child from front of pendings list
-				# and any trailing space
-				pendings=${pendings#${pending_child}}
-				pendings=${pendings# }
-				debug 9 "$funcname(): flushed \$pending_child '$pending_child'"
-				if [ $teardown -eq 0 ]; then
-					# we don't decrement $children in the teardown
-					# case because $children refers to how many
-					# we sent the CONT signal to, not how many
-					# came through the fifo with a START.
-					children=$(( children + 1 ))
-					started_total=$(( started_total + 1 ))
-				fi
+				# kill all pending children and remove from pending
+				kill -"$signal" $pendings
+				debug 2 "$funcname(): [$message] sent '$signal' to pending children: '$pendings'"
+				pendings=""
+				debug 2 "$funcname(): [$message] cleared pending children list"
+			else
+				debug 2 "$funcname(): [$message] no pending children"
+			fi
+			
+			if [ $children -gt 0 ]; then
+				debug 2 "$funcname(): [$message] \$children -gt 0, need to wait"
+				# still more running children to wait for
+				continue
+			else
+				debug 2 "$funcname(): [$message] no running \$children to wait for"
+			fi
+			if [ ${#wait_requestors} -gt 0 ]; then
+				debug 2 "$funcname(): [$message] outstanding \$wait_requestors found"
+				kill -CONT $wait_requestors
+				debug 2 "$funcname(): [$message] sent SIGCONT to \$wait_requestors: '$wait_requestors'"
 				continue
 			fi
+			debug 2 "$funcname(): [$message] holy shit we are done! @&@ &@ &@& @& @&&@&@ @"
+			# all done!
 			break
-		done
-			
+		fi
+
+		if [ $children -ge $concurrency ]; then
+			debug 2 "$funcname(): [$message] at concurrency limit, looping"
+			continue
+		fi
+
+		if [ ${#pendings} -eq 0 ]; then
+			debug 2 "$funcname(): [$message] no pending children, looping"
+			continue
+		fi
+
+		pid=${pendings%% *}
+		debug 1 "$funcname(): [$message] found a pending child: '$pid', sending it '$signal'"
+		kill -"$signal" $pid
+		debug 2 "$funcname(): [$message] signal '$signal' sent to child '$pid'"
+		# DO NOT remove a child from pendings here, that is done after
+		# we see a 'START' from them, ensuring they got the signal to continue
+		# XXX can i flush multiple here if i check to stay under concurrency?
+		debug 3 "$funcname(): [$message] looping"
 	done
 
-	debug 18 "$funcname(): \$started_total: '$started_total', \$ended_total: '$ended_total'"
-
-	if [ ${#wait_requestors} -eq 0 ]; then
-		warnx "$funcname(): exited work loop but have null \$wait_requestors."
-		return 1
-	fi
-	for pid in $wait_requestors; do
-		debug 14 "$funcname(): sending CONT to wait requestor: '$pid'"
-		kill -CONT "$pid"
-	done
-	debug 1 "$funcname() holy shit total victory"
+	message=COMPLETE
+	debug 18 "$funcname(): [$message] \$started_total: '$started_total', \$ended_total: '$ended_total'"
+	debug 1 "$funcname(): [$message] holy shit total victory"
 	return 0
 }
 
 IPC2_END()
 {
 	local funcname=IPC2_END
+	local message=WAIT
 	local pid
 
 	# force a subshell so we can stop our own instantiation
 	# without otherwise stopping the whole script
 	(
 		if ! pid=$(current_pid); then
-			warnx "$funcname(): failed current_pid(), this child is worthless"
+			warnx "$funcname(): [$message] failed current_pid(), this child is worthless"
 			return 1
 		fi
 
-		debug 13 "$funcname(): sending WAIT to \$IPC_FIFO: '$IPC_FIFO'"
-		if ! echo "$pid WAIT" >>"$IPC_FIFO"; then
-			warnx "$funcname(): failed sending WAIT to '$IPC_FIFO'"
+		debug 13 "$funcname(): [$message] -> '$pid'"
+		debug 12 "$funcname(): [$pid] [$message] sending message to fifo"
+		if ! echo "$pid $message" >>"$IPC_FIFO"; then
+			warnx "$funcname(): [$pid] [$message] failed sending message"
 			return 1
 		fi
-		echo "$pid WAIT $funcname" >>"ipcdir/log"
-		debug 8 "$funcname(): OK I AM PAUSING MYSELF NOW TOO!"
+		debug 13 "$funcname(): [$pid] [$message] logging message"
+		echo "$pid $message $funcname" >>"ipcdir/sendlog"
+		debug 8 "$funcname(): [$pid] [$message] pausing myself with SIGSTOP"
 		kill -STOP "$pid"
-		debug 8 "$funcname(): YAYA I AM RESUMED!"
+		message=FINISH
+		debug 8 "$funcname(): [$pid] [$message] RECEIVED SIGNAL TO CONTINUE"
+		debug 12 "$funcname(): [$pid] [$message] sending message to fifo"
+		if ! echo "$pid $message" >>"$IPC_FIFO"; then
+			warnx "$funcname(): [$message] failed sending message"
+			return 1
+		fi
+		debug 13 "$funcname(): [$pid] [$message] logging message"
+		echo "$pid $message $funcname" >>"ipcdir/sendlog"
 	);
 
 	return 0
@@ -384,7 +482,7 @@ IPC2_END()
 IPC2_CHILD()
 {
 	local funcname=IPC2_CHILD
-	local pid
+	local pid message
 
 	{
 
@@ -393,21 +491,38 @@ IPC2_CHILD()
 			return 1
 		fi
 			
-		debug 14 "$funcname(): _____ $pid _________ HI THERE I AM PUTTING '$pid' INTO '$IPC_FIFO' NOW"
-		echo "$pid START" >>"$IPC_FIFO"
-		echo "$pid START $funcname" >>"ipcdir/log"
-		debug 14 "$funcname(): _____ $pid _________ OK THAT WORKED"
-		debug 19 "$funcname():                                    &&&&&&& PAUSING MYSELF: '$pid'"
-		kill -STOP "$pid"
-		debug 19 "$funcname():                                       $$$$$$$$$$$$ I HAVE BEEN RESUMED: '$pid'"
-		# catch error
-		debug 11 "$funcname(): '$pid' START: '$@'"
-		eval "$@"
-		debug 11 "$funcname(): '$pid' END: '$@'"
-		debug 14 "$funcname(): __!!!___ $pid ___!!!______ HI THERE I AM PUTTING '$pid' INTO '$IPC_FIFO' NOW"
-		echo "$pid END" >>"$IPC_FIFO"
-		echo "$pid END $funcname" >>"ipcdir/log"
-		debug 14 "$funcname(): __!!!___ $pid ___!!!______ OK THAT ALSO WORKED"
+		message=PENDING
+		while :; do
+
+			debug 14 "$funcname(): [$pid] [$message] 1: sending message to fifo"
+			echo "$pid $message" >>"$IPC_FIFO"
+			debug 14 "$funcname(): [$pid] [$message] 2: unblocked from fifo"
+			debug 16 "$funcname(): [$pid] [$message] 3: adding message to log"
+			echo "$pid $message $funcname '$@'" >>"ipcdir/sendlog"
+
+			case $message in
+			PENDING)
+				debug 19 "$funcname(): [$pid] [$message] 4: pausing myself with SIGSTOP"
+				kill -STOP "$pid"
+				debug 16 "$funcname(): [$pid] [$message] 5: RECEIVED SIGNAL TO CONTINUE"
+				message=START
+				;;
+			START)
+				# catch error
+				debug 11 "$funcname(): [$pid] [$message] 4: executing workload '$@'"
+				if eval "$@"; then
+					debug 11 "$funcname(): [$pid] [$message] 5: finished workload '$@'"
+				else
+					warnx "$funcname(): [$pid] [$message]: workload failed: '$@'"
+				fi
+				message=END
+				;;
+			END)
+				break
+				;;
+			esac
+		done
+
 	}&
 
 	return 0
