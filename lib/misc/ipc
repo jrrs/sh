@@ -259,6 +259,7 @@ IPC_MASTER()
 						break
 					else
 						# debug 2 "$funcname(): [$message] no running \$currently_running to wait for"
+						:
 					fi
 
 					if [ $currently_signaled -gt 0 ]; then
@@ -266,6 +267,7 @@ IPC_MASTER()
 						break
 					else
 						# debug 2 "$funcname(): [$message] no running \$currently_signaled to wait for"
+						:
 					fi
 
 					# debug 2 "$funcname(): [$message] we appear to be finished with all outstanding work"
@@ -291,6 +293,7 @@ IPC_MASTER()
 					currently_pending=$(( currently_pending - 1 ))
 					currently_signaled=$(( currently_signaled + 1 ))
 				else
+					:
 					# debug 2 "$funcname(): [$message] no child lock found"
 				fi
 
