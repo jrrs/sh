@@ -162,7 +162,7 @@ IPC_START()
 # - start pending children if there's headroom, wait for
 #   others to finish if not
 # - during shut down, create the teardown semaphore (checked for
-#   by pending IPC_CHILD processes, wait for running children
+#   by pending IPC_CHILD processes), wait for running children
 #   to finish, and signal IPC_END to continue when we're done
 #
 IPC_MASTER()
