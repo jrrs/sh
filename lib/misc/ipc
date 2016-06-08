@@ -215,7 +215,6 @@ IPC_MASTER()
 				PENDING)
 					# at the pending stage, the PID is the same as IPC_CHILD's caller
 					# so caring about it is not of significant value.
-					# but we can still keep track of them as unique instances.
 					currently_pending=$(( currently_pending + 1 ))
 					;;
 				START)
@@ -224,7 +223,7 @@ IPC_MASTER()
 					lifetime_started_total=$(( lifetime_started_total + 1 ))
 					;;
 				WAIT)
-					# - any children already in the $pending_queue have already
+					# any children already in the $pending_queue have already
 					# been sent their SIGCONT and already count toward the
 					# running total, so they will be allowed to continue running
 					# during teardown mode.
