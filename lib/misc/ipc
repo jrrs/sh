@@ -135,14 +135,6 @@ IPC_START()
 		export IPC_TEARDOWN
 	EOT
 
-	case $BASH_VERSION in
-	"")
-		;;
-	*)
-		shopt -s expand_aliases
-		;;
-	esac
-
 	. "$tmpdir/info"
 
 	IPC_MASTER &
