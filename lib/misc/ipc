@@ -157,17 +157,14 @@ IPC_MASTER()
 	local currently_running=0
 	local currently_pending=0
 	local currently_signaled=0
-	local currently_unsignaled=0
 	local lifetime_ended_total=0
 	local lifetime_started_total=0
 	local message=INIT
 	local pending_queue _pending_queue
 	local pid pids
-	local rogue_pid=1
 	local signal=CONT
 	local signaled_queue _signaled_queue
 	local teardown=0
-	local unsignaled_queue _unsignaled_queue
 	local var var2
 	local wait_requestors _wait_requestors
 
@@ -198,43 +195,6 @@ IPC_MASTER()
 					if [ $var -ne 0 ]; then
 						warnx "$funcname(): [$message] nonzero return value '$var' from \$pid: '$pid'"
 					fi
-					;;
-				FINISH)
-					# FINISH is the IPC_STOP version of IPC_CHILD's START.
-					# it is used to indicate a SIGSTOP'd IPC_STOP process
-					# has received its SIGCONT.
-					rogue_pid=1
-					_wait_requestors=""
-					# debug 3 "$funcname(): [$message] removing \$pid '$pid' from \$wait_requestors '$wait_requestors'"
-					for var in $wait_requestors; do
-						# remove the incoming PID from the wait requestors list
-						# by making a new list populated by all the
-						# pids in $wait_requestors other than the one we have
-						# in our hand now.
-						case $var in
-						$pid)
-							rogue_pid=0
-							;;
-						*)
-							case $_wait_requestors in
-							"")
-								_wait_requestors=$var
-								;;
-							*)
-								_wait_requestors="$_wait_requestors $var"
-								;;
-							esac
-							;;
-						esac
-					done
-					if [ $rogue_pid -eq 1 ]; then
-						# received a message for a non-pending PID.
-						# XXX: ignore this?  fail?
-						warnx "$funcname(): [$message] received message for unknown wait requestor \$pid: '$pid'"
-						return 1
-					fi
-					wait_requestors="$_wait_requestors"
-					# debug 3 "$funcname(): [$message] \$wait_requestors is now '$wait_requestors', ensure removal of \$pid: '$pid'"
 					;;
 				PENDING)
 					# at the pending stage, the PID is the same as IPC_CHILD's caller
@@ -271,8 +231,6 @@ IPC_MASTER()
 					# been sent their SIGCONT and already count toward the
 					# running total, so they will continue to be sent SIGCONT
 					# in fell swoops during teardown mode.
-					# - otherwise, the $unsignaled_queue now can be thought of
-					# as a kill_queue.
 					signal=KILL
 					teardown=1
 					if ! >"$IPC_TEARDOWN"; then
@@ -313,7 +271,7 @@ IPC_MASTER()
 						# debug 2 "$funcname(): [$message] no running \$currently_signaled to wait for"
 					fi
 
-					# debug 2 "$funcname(): [$message] holy shit we are done! @&@ &@ &@& @& @&&@&@ @"
+					# debug 2 "$funcname(): [$message] we appear to be finished with all outstanding work"
 					# all done!
 					break 3
 				fi
@@ -397,9 +355,9 @@ IPC_STOP()
 	local pid
 
 	# force a subshell so we can stop our own instantiation
-	# without otherwise stopping the whole script.
-	# but don't background it; this function should block
-	# until acknowledged by the master
+	# without otherwise stopping the calling script.
+	# don't background it; this function should block
+	# until IPC_MASTER finishes teardown.
 	
 	(
 		if ! pid=$(current_pid); then
