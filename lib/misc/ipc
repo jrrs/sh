@@ -18,6 +18,15 @@ esac
 . ${_libroot}/misc/current_pid
 
 #
+# library usage:
+#
+# 1) anywhere before the code in question run IPC_START once.
+# 2) sprinkle IPC_CHILD whereever you want to
+# 3) run IPC_END when you want to tear things down or otherwise
+#    need to wait for all the children to finish.
+#
+
+#
 # usage: IPC_START tmpdir [concurrency]
 #
 # tmpdir - a writeable directory for IPC_* functions to perform work in.
@@ -142,6 +151,20 @@ IPC_START()
 	return 0
 }
 
+#
+# queue manager for IPC_CHILD invoked children.
+#
+# simplified state flow:
+# - read fifo for incoming messages - sent by IPC_CHILD or
+#   IPC_END
+# - parse message to determine if a child wants to start running,
+#   just started running; or if we're being told to shut down.
+# - start pending children if there's headroom, wait for
+#   others to finish if not
+# - during shut down, create the teardown semaphore (checked for
+#   by pending IPC_CHILD processes, wait for running children
+#   to finish, and signal IPC_END to continue when we're done
+#
 IPC_MASTER()
 {
 	local funcname=IPC_MASTER
@@ -155,7 +178,6 @@ IPC_MASTER()
 	local pending_queue _pending_queue
 	local pid pids
 	local signal=CONT
-	local signaled_queue _signaled_queue
 	local teardown=0
 	local var var2
 	local wait_requestors _wait_requestors
@@ -180,6 +202,8 @@ IPC_MASTER()
 
 				case $message in
 				"END "*[0-9]*)
+					# end message includes return code of child, otherwise
+					# unavailable b/c they were &'d..
 					currently_running=$(( currently_running - 1 ))
 					lifetime_ended_total=$(( lifetime_ended_total + 1 ))
 					var=${message##* } # return value of the payload
@@ -194,35 +218,16 @@ IPC_MASTER()
 					# but we can still keep track of them as unique instances.
 					currently_pending=$(( currently_pending + 1 ))
 					;;
-				"RENAME "*[0-9]*)
-					_signaled_queue=""
-					# remove '$pid' from signaled queue and replace with the
-					# new pid, derived from '$message'
-					var2=${message##* }
-					for var in $signaled_queue; do
-						case $var in
-						$pid)
-							# rename me
-							var=$var2
-							;;
-						esac
-						if [ -z "$_signaled_queue" ]; then
-							_signaled_queue=$var
-						else
-							_signaled_queue="$_signaled_queue $var"
-						fi
-					done
-					;;
 				START)
 					currently_running=$(( currently_running + 1 ))
 					currently_signaled=$(( currently_signaled - 1 ))
 					lifetime_started_total=$(( lifetime_started_total + 1 ))
 					;;
 				WAIT)
-					# - any children already in the $signaled_queue have already
+					# - any children already in the $pending_queue have already
 					# been sent their SIGCONT and already count toward the
-					# running total, so they will continue to be sent SIGCONT
-					# in fell swoops during teardown mode.
+					# running total, so they will be allowed to continue running
+					# during teardown mode.
 					signal=KILL
 					teardown=1
 					if ! >"$IPC_TEARDOWN"; then
@@ -340,6 +345,10 @@ IPC_MASTER()
 	return 0
 }
 
+#
+# tells IPC_MASTER to enter shutdown mode
+# blocks until IPC_MASTER signals everything's done.
+#
 IPC_STOP()
 {
 	local funcname=IPC_STOP
@@ -372,6 +381,32 @@ IPC_STOP()
 	return 0
 } 
 
+#
+# add this to the front of the command you want to parallelize.
+#
+# e.g.:
+#
+# -------------------------------
+# for x in $(bunch of things); do
+# 	something time consuming
+# done
+# -------------------------------
+#
+# becomes:
+# -----------------------------------------
+# for x in $(bunch of things); do
+# 	IPC_CHILD something time consuming
+# done
+# -----------------------------------------
+#
+# it will block until IPC_MASTER has given it the go-ahead to begin work,
+# at which point it will be backgrounded and the caller will continue on.
+#
+# since the "payload" (the original command) is executed backgrounded,
+# its return value is not available to any callers/parents.  the return
+# value will be communicated to IPC_MASTER over the fifo when the payload
+# is finished.
+#
 IPC_CHILD()
 {
 	local funcname=IPC_CHILD
