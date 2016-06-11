@@ -134,16 +134,19 @@ IPC_START()
 	fi
 	# drop the info file down
 	cat > "$tmpdir/info" <<- EOT
-		readonly IPC_FIFO=$fifo
-		export IPC_FIFO
-		readonly IPC_CHILD_LOCK=$child_lock
+		export IPC_DIR
+		readonly IPC_DIR=$tmpdir
 		export IPC_CHILD_LOCK
-		readonly IPC_CONCURRENCY=$concurrency
+		readonly IPC_CHILD_LOCK=$child_lock
 		export IPC_CONCURRENCY
-		readonly IPC_STATUS=$tmpdir/status
+		readonly IPC_CONCURRENCY=$concurrency
+		export IPC_FIFO
+		readonly IPC_FIFO=$fifo
 		export IPC_STATUS
-		readonly IPC_TEARDOWN=$tmpdir/teardown
+		readonly IPC_STATUS=$IPC_DIR/status
 		export IPC_TEARDOWN
+		readonly IPC_TEARDOWN=$IPC_DIR/teardown
+
 	EOT
 
 	. "$tmpdir/info"
