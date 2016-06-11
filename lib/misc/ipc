@@ -297,7 +297,7 @@ IPC_MASTER()
 					break 3
 				fi
 
-				if (( (currently_running + currently_pending) >= IPC_CONCURRENCY )); then
+				if (( (currently_running + currently_signaled) >= IPC_CONCURRENCY )); then
 					# debug 2 "$funcname(): [$message] at concurrency limit: '$IPC_CONCURRENCY', looping"
 					break
 				fi
