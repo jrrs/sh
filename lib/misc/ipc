@@ -173,6 +173,7 @@ IPC_MASTER()
 	local currently_pending=0
 	local currently_signaled=0
 	local greatest_concurrency=0 
+	local info
 	local lifetime_ended_total=0
 	local lifetime_started_total=0
 	local message=INIT
@@ -193,7 +194,7 @@ IPC_MASTER()
 
 		message=READ
 		# # debug 1 "$funcname(): [$message] beginning to read fifo"
-		while read pid message; do
+		while read message pid info; do
 
 			while :; do
 
@@ -202,15 +203,15 @@ IPC_MASTER()
 				# echo "$pid $message $funcname" >>"ipcdir/recvlog"
 
 				case $message in
-				"END "*[0-9]*)
+				END)
 					# end message includes return code of child, otherwise
 					# unavailable b/c they were &'d..
 					currently_running=$(( currently_running - 1 ))
 					lifetime_ended_total=$(( lifetime_ended_total + 1 ))
-					var=${message##* } # return value of the payload
-					message=${message% $var}
-					if [ $var -ne 0 ]; then
-						warnx "$funcname(): [$message] nonzero return value '$var' from \$pid: '$pid'"
+					if ! isdigit "$info"; then
+						warnx "$funcname(): [$message] non-numeric return value '$info' from \$pid: '$pid'"
+					elif [ $info -ne 0 ]; then
+						warnx "$funcname(): [$message] nonzero return value '$info' from \$pid: '$pid'"
 					fi
 					;;
 				PENDING)
@@ -376,12 +377,12 @@ IPC_STOP()
 
 		# debug 13 "$funcname(): [$message] -> '$pid'"
 		# debug 12 "$funcname(): [$pid] [$message] sending message to fifo"
-		if ! echo "$pid $message" >>"$IPC_FIFO"; then
+		if ! echo "$message $pid" >>"$IPC_FIFO"; then
 			warnx "$funcname(): [$pid] [$message] failed sending message"
 			return 1
 		fi
 		# debug 13 "$funcname(): [$pid] [$message] logging message"
-		## echo "$pid $message $funcname" >>"ipcdir/sendlog"
+		## echo "$message $pid $funcname" >>"ipcdir/sendlog"
 		# debug 8 "$funcname(): [$pid] [$message] pausing myself with SIGSTOP"
 		kill -STOP "$pid"
 	);
@@ -435,7 +436,7 @@ IPC_CHILD()
 	fi
 	message=PENDING
 	# debug 14 "$funcname(): [$pid] [$message] 1: sending message to fifo"
-	echo "$pid $message" >>"$IPC_FIFO"
+	echo "$message $pid" >>"$IPC_FIFO"
 	# debug 14 "$funcname(): [$pid] [$message] 2: unblocked from fifo"
 	# debug 16 "$funcname(): [$pid] [$message] 3: adding message to log"
 	# echo "$pid $message $funcname '$@'" >>"ipcdir/sendlog"
@@ -469,10 +470,10 @@ IPC_CHILD()
 			# debug 14 "$funcname(): [$pid] [$message] 1: sending message to fifo"
 			case $message in
 			END)
-				echo "$pid $message $retval" >>"$IPC_FIFO"
+				echo "$message $pid $retval" >>"$IPC_FIFO"
 				;;
 			*)
-				echo "$pid $message" >>"$IPC_FIFO"
+				echo "$message $pid" >>"$IPC_FIFO"
 				;;
 			esac
 
