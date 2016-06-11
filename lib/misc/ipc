@@ -134,18 +134,18 @@ IPC_START()
 	fi
 	# drop the info file down
 	cat > "$tmpdir/info" <<- EOT
-		export IPC_DIR
 		readonly IPC_DIR=$tmpdir
-		export IPC_CHILD_LOCK
+		export IPC_DIR
 		readonly IPC_CHILD_LOCK=$child_lock
-		export IPC_CONCURRENCY
+		export IPC_CHILD_LOCK
 		readonly IPC_CONCURRENCY=$concurrency
-		export IPC_FIFO
+		export IPC_CONCURRENCY
 		readonly IPC_FIFO=$fifo
-		export IPC_STATUS
+		export IPC_FIFO
 		readonly IPC_STATUS=$IPC_DIR/status
-		export IPC_TEARDOWN
+		export IPC_STATUS
 		readonly IPC_TEARDOWN=$IPC_DIR/teardown
+		export IPC_TEARDOWN
 
 	EOT
 
@@ -236,7 +236,7 @@ IPC_MASTER()
 					lifetime_started_total=$(( lifetime_started_total + 1 ))
 					;;
 				STATUS)
-					if ! cat >"$IPC_STATUS" <<- EOT
+					if ! cat >"$IPC_DIR/status" <<- EOT
 						currently_pending: "$currently_pending"
 						currently_running: "$currently_running"
 						currently_signaled: "$currently_signaled"
@@ -247,7 +247,7 @@ IPC_MASTER()
 						wait_requestors: "$wait_requestors"
 						EOT
 					then
-						warnx "$funcname(): [$message] unable to update status file '$IPC_STATUS'"
+						warnx "$funcname(): [$message] unable to update status file '$IPC_DIR/status'"
 					fi
 					;;
 				WAIT)
@@ -297,7 +297,7 @@ IPC_MASTER()
 					break 3
 				fi
 
-				if [ $currently_running -ge $IPC_CONCURRENCY ]; then
+				if (( (currently_running + currently_pending) >= IPC_CONCURRENCY )); then
 					# debug 2 "$funcname(): [$message] at concurrency limit: '$IPC_CONCURRENCY', looping"
 					break
 				fi
