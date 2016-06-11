@@ -165,7 +165,7 @@ IPC_START()
 #   others to finish if not
 # - during shut down, create the teardown semaphore (checked for
 #   by pending IPC_CHILD processes), wait for running children
-#   to finish, and signal IPC_STOP to continue when we're done
+#   to finish, and when we're done, signal IPC_STOP.
 #
 IPC_MASTER()
 {
@@ -179,9 +179,7 @@ IPC_MASTER()
 	local lifetime_ended_total=0
 	local lifetime_started_total=0
 	local message=INIT
-	local pending_queue _pending_queue
 	local pid pids
-	local signal=CONT
 	local teardown=0
 	local var var2
 	local wait_requestors _wait_requestors
@@ -246,11 +244,6 @@ IPC_MASTER()
 					fi
 					;;
 				WAIT)
-					# any children already in the $pending_queue have already
-					# been sent their SIGCONT and already count toward the
-					# running total, so they will be allowed to continue running
-					# during teardown mode.
-					signal=KILL
 					teardown=1
 					if ! >"$IPC_TEARDOWN"; then
 						warnx "$funcname(): [$message] failed to set \$IPC_TEARDOWN file: '$IPC_TEARDOWN'"
