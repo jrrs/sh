@@ -172,6 +172,7 @@ IPC_MASTER()
 	local currently_running=0
 	local currently_pending=0
 	local currently_signaled=0
+	local greatest_concurrency=0 
 	local lifetime_ended_total=0
 	local lifetime_started_total=0
 	local message=INIT
@@ -219,6 +220,10 @@ IPC_MASTER()
 					;;
 				START)
 					currently_running=$(( currently_running + 1 ))
+					if [ $currently_running -gt $greatest_concurrency ]; then
+						# informational
+						greatest_concurrency=$currently_running
+					fi
 					currently_signaled=$(( currently_signaled - 1 ))
 					lifetime_started_total=$(( lifetime_started_total + 1 ))
 					;;
@@ -340,10 +345,11 @@ IPC_MASTER()
 		# debug 2 "$funcname(): [$message] sent SIGCONT to \$wait_requestors: '$wait_requestors'"
 	fi
 
-	# debug 10 "$funcname(): [$message] \$currently_running: '$currently_running'"
-	# debug 12 "$funcname(): [$message] \$lifetime_started_total: '$lifetime_started_total'"
-	# debug 12 "$funcname(): [$message] \$lifetime_ended_total: '$lifetime_ended_total'"
-	# debug 1 "$funcname(): [$message] total victory, shutting down"
+	debug 1 "$funcname(): [$message] \$currently_running: '$currently_running'"
+	debug 1 "$funcname(): [$message] \$greatest_concurrency: '$greatest_concurrency'"
+	debug 1 "$funcname(): [$message] \$lifetime_started_total: '$lifetime_started_total'"
+	debug 1 "$funcname(): [$message] \$lifetime_ended_total: '$lifetime_ended_total'"
+	debug 1 "$funcname(): [$message] total victory, shutting down"
 	return 0
 }
 
@@ -477,7 +483,7 @@ IPC_CHILD()
 			case $message in
 			START)
 				# debug 11 "$funcname(): [$pid] [$message] 4: executing workload '$@'"
-				if eval "$@"; then
+				if "$@"; then
 					retval=$?
 					# debug 11 "$funcname(): [$pid] [$message] 5: finished workload '$@'"
 				else
