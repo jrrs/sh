@@ -192,6 +192,10 @@ IPC_MASTER()
 		return 1
 	fi
 	# # debug 1 "$funcname(): [$message] -> '$pid'"
+	if ! echo "$pid" >"$IPC_DIR/master"; then
+		warnx "$funcname(): failed to record current pid into '$IPC_DIR/master'"
+		return 1
+	fi
 
 	while :; do
 
