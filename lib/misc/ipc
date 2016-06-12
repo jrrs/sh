@@ -142,9 +142,9 @@ IPC_START()
 		export IPC_CONCURRENCY
 		readonly IPC_FIFO=$fifo
 		export IPC_FIFO
-		readonly IPC_STATUS=$IPC_DIR/status
+		readonly IPC_STATUS=$tmpdir/status
 		export IPC_STATUS
-		readonly IPC_TEARDOWN=$IPC_DIR/teardown
+		readonly IPC_TEARDOWN=$tmpdir/teardown
 		export IPC_TEARDOWN
 
 	EOT
@@ -368,6 +368,21 @@ IPC_MASTER()
 	debug 1 "$funcname(): [$message] \$lifetime_started_total: '$lifetime_started_total'"
 	debug 1 "$funcname(): [$message] \$lifetime_ended_total: '$lifetime_ended_total'"
 	debug 1 "$funcname(): [$message] total victory, shutting down"
+
+					if ! cat >"$IPC_DIR/status" <<- EOT
+						currently_pending: "$currently_pending"
+						currently_running: "$currently_running"
+						currently_signaled: "$currently_signaled"
+						greatest_concurrency: "$greatest_concurrency"
+						lifetime_ended_total: "$lifetime_ended_total"
+						lifetime_started_total: "$lifetime_started_total"
+						teardown mode: "$teardown"
+						wait_requestors: "$wait_requestors"
+						EOT
+					then
+						warnx "$funcname(): [$message] unable to update status file '$IPC_DIR/status'"
+					fi
+
 	return 0
 }
 
