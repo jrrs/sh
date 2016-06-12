@@ -339,6 +339,9 @@ IPC_MASTER()
 		# debug 12 "$funcname(): [$message] \$lifetime_started_total: '$lifetime_started_total'"
 		# debug 12 "$funcname(): [$message] \$lifetime_ended_total: '$lifetime_ended_total'"
 		
+		if [ $currently_pending -gt 0 ]; then
+			continue
+		fi
 		if [ $currently_running -gt 0 ]; then
 			# debug 7 "$funcname(): [$message] still children running"
 			continue
@@ -351,8 +354,12 @@ IPC_MASTER()
 			# debug 7 "$funcname(): [$mismatch] in lifetime total!?"
 			continue
 		fi
+		if [ $teardown -eq 0 ]; then
+			continue
+		fi
 
-		continue
+		warnx "$funcname(): [$message] read failed and looks like nothing left to do"
+		break
 
 	done # while :; # top level
 
@@ -369,19 +376,19 @@ IPC_MASTER()
 	debug 1 "$funcname(): [$message] \$lifetime_ended_total: '$lifetime_ended_total'"
 	debug 1 "$funcname(): [$message] total victory, shutting down"
 
-					if ! cat >"$IPC_DIR/status" <<- EOT
-						currently_pending: "$currently_pending"
-						currently_running: "$currently_running"
-						currently_signaled: "$currently_signaled"
-						greatest_concurrency: "$greatest_concurrency"
-						lifetime_ended_total: "$lifetime_ended_total"
-						lifetime_started_total: "$lifetime_started_total"
-						teardown mode: "$teardown"
-						wait_requestors: "$wait_requestors"
-						EOT
-					then
-						warnx "$funcname(): [$message] unable to update status file '$IPC_DIR/status'"
-					fi
+	if ! cat >"$IPC_DIR/status" <<- EOT
+		currently_pending: "$currently_pending"
+		currently_running: "$currently_running"
+		currently_signaled: "$currently_signaled"
+		greatest_concurrency: "$greatest_concurrency"
+		lifetime_ended_total: "$lifetime_ended_total"
+		lifetime_started_total: "$lifetime_started_total"
+		teardown mode: "$teardown"
+		wait_requestors: "$wait_requestors"
+		EOT
+	then
+		warnx "$funcname(): [$message] unable to update status file '$IPC_DIR/status'"
+	fi
 
 	return 0
 }
@@ -480,7 +487,7 @@ IPC_CHILD()
 	until 2>/dev/null >"$IPC_CHILD_LOCK"; do
 		if [ -e "$IPC_TEARDOWN" ]; then
 			# debug 2 "$funcname(): [$message] saw teardown semaphore, returning"
-			return 1
+			return 0
 		fi
 	done
 	# debug 13 "$funcname(): [$message] Y: free from child lock"
@@ -533,6 +540,7 @@ IPC_CHILD()
 				return 1
 			esac
 		done
+		return 0
 	}&
 
 	return 0
