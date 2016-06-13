@@ -174,6 +174,9 @@ IPC_MASTER()
 {
 	local funcname=IPC_MASTER
 
+	local backoff_amount=0
+	local backoff_attempts=0
+	local backoff_max_attempts=10
 	local currently_pending=0 # we've seen its PENDING, but have not removed child_lock
 	local currently_running=0 # we've seen its START, but not its END
 	local currently_signaled=0 # we removed child_lock, but have not seen a subsequent START
@@ -191,8 +194,6 @@ IPC_MASTER()
 	local var
 	local wait_requestors _wait_requestors
 
-	trap 'warnx "$funcname(): trapped SIGPIPE' PIPE
-
 	if ! pid=$(current_pid); then
 		warnx "$funcname(): failed to get current PID"
 		return 1
@@ -203,6 +204,25 @@ IPC_MASTER()
 		return 1
 	fi
 
+	exec 3<&0
+	backoff_amount=0
+	backoff_attempts=0
+	message=OPEN
+	until exec <"$IPC_FIFO"; do
+		if [ $backoff_attempts -gt $backoff_max_attempts ]; then
+			warnx "$funcname(): [$pid] [$message] failed sending message after \$backoff_attempts: '$backoff_attempts'"
+			return 1
+		fi
+		warnx "$funcname(): [$pid] [$message] could not write to fifo, backing off by '$backoff_amount'"
+		if ! sleep "$backoff_amount"; then
+			warnx "$funcname(): [$pid] [$message] failed backoff sleep.  \$backoff_amount: '$backoff_amount'"
+			return 1
+		fi
+		backoff_attempts=$(( backoff_attempts + 1 ))
+		backoff_amount=$(( backoff_amount + 1 ))
+	done
+
+	debug 1 "$funcname(): [$message] FIFO opened"
 	while :; do
 
 		message=READ
@@ -349,7 +369,7 @@ IPC_MASTER()
 					;;
 				WAIT)
 					teardown=1
-					if ! >"$IPC_TEARDOWN"; then
+					if ! </dev/null >"$IPC_TEARDOWN"; then
 						warnx "$funcname(): [$message] failed to set \$IPC_TEARDOWN file: '$IPC_TEARDOWN'"
 					fi
 					# debug 3 "$funcname(): [$message] adding \$pid '$pid' to \$wait_requestors '$wait_requestors'"
@@ -441,7 +461,7 @@ IPC_MASTER()
 			debug 1 "$funcname(): [$message] reading fifo"
 			continue 
 
-		done <"$IPC_FIFO"
+		done 
 
 		message=RECOVER
 		debug 7 "$funcname(): [$message] fell out of the loop because no pending fifo writes to read"
@@ -651,6 +671,7 @@ IPC_CHILD()
 	local var
 	local umask=0777
 
+	debug 0 "$funcname(): [$@] entered"
 	# in the current implementation this is effectively the same as '$$' but
 	# i'll burn another current_pid() run and we'll see if it hurts perf at all
 	if ! pid=$(current_pid); then
@@ -664,9 +685,27 @@ IPC_CHILD()
 	message=PENDING
 	# debug 14 "$funcname(): [$pid] [$message] 1: sending message to fifo"
 
+	exec 3>&1
 	backoff_amount=0
 	backoff_attempts=0
-	until echo "$message $pid" >>"$IPC_FIFO"; do
+	until exec >"$IPC_FIFO"; do
+		if [ $backoff_attempts -gt $backoff_max_attempts ]; then
+			warnx "$funcname(): [$pid] [$message] failed opening fifo after \$backoff_attempts: '$backoff_attempts'"
+			return 1
+		fi
+		warnx "$funcname(): [$pid] [$message] could not open fifo, backing off by '$backoff_amount'"
+		if ! sleep "$backoff_amount"; then
+			warnx "$funcname(): [$pid] [$message] failed backoff sleep.  \$backoff_amount: '$backoff_amount'"
+			return 1
+		fi
+		backoff_attempts=$(( backoff_attempts + 1 ))
+		backoff_amount=$(( backoff_amount + 1 ))
+	done
+
+	#until echo "$message $pid" >>"$IPC_FIFO"; do
+	backoff_amount=0
+	backoff_attempts=0
+	until echo "$message $pid"; do
 		if [ $backoff_attempts -gt $backoff_max_attempts ]; then
 			warnx "$funcname(): [$pid] [$message] failed sending message after \$backoff_attempts: '$backoff_attempts'"
 			return 1
@@ -694,7 +733,8 @@ IPC_CHILD()
 
 			backoff_amount=0
 			backoff_attempts=0
-			until echo "$message $pid" >>"$IPC_FIFO"; do
+			#until echo "$message $pid" >>"$IPC_FIFO"; do
+			until echo "$message $pid"; do
 				if [ $backoff_attempts -gt $backoff_max_attempts ]; then
 					warnx "$funcname(): [$pid] [$message] failed sending message after \$backoff_attempts: '$backoff_attempts'"
 					return 1
@@ -723,24 +763,26 @@ IPC_CHILD()
 			warnx "$funcname(): failed current_pid(), child now worthless"
 			return 1
 		fi
+		debug 0 "$funcname(): [$@] got pid: '$pid'"
 
 		# debug 14 "$funcname(): [$pid] [$message]"
 		while :; do
 
 			# same block as above
-			# debug 14 "$funcname(): [$pid] [$message] 1: sending message to fifo"
 			case $message in
 			END)
 				var="$message $pid $retval"
 				;;
 			*)
-				var="$messsage $pid"
+				var="$message $pid"
 				;;
 			esac
+			debug 14 "$funcname(): [$pid] [$message] 1: sending message '$var' to fifo"
 
 			backoff_amount=0
 			backoff_attempts=0
-			until echo "$message $pid $retval" >>"$IPC_FIFO"; do
+			#until echo "$message $pid $retval" >>"$IPC_FIFO"; do
+			until echo "$message $pid $retval"; do
 				if [ $backoff_attempts -gt $backoff_max_attempts ]; then
 					warnx "$funcname(): [$pid] [$message] failed sending message after \$backoff_attempts: '$backoff_attempts'"
 					return 1
@@ -754,23 +796,27 @@ IPC_CHILD()
 				backoff_amount=$(( backoff_amount + 1 ))
 			done
 
-			# debug 14 "$funcname(): [$pid] [$message] 2: unblocked from fifo"
+			debug 14 "$funcname(): [$pid] [$message] 2: unblocked from fifo"
 			# debug 16 "$funcname(): [$pid] [$message] 3: adding message to log"
 			# echo "$pid $message $funcname '$@'" >>"ipcdir/sendlog"
 
 			case $message in
 			START)
-				# debug 11 "$funcname(): [$pid] [$message] 4: executing workload '$@'"
-				if "$@"; then
+				debug 0 "$funcname(): [$@] running"
+				debug 11 "$funcname(): [$pid] [$message] 4: executing workload '$@'"
+				# use original stdout at fd 3
+				if 1>&3 "$@"; then
 					retval=$?
-					# debug 11 "$funcname(): [$pid] [$message] 5: finished workload '$@'"
+					debug 11 "$funcname(): [$pid] [$message] 5: finished workload '$@'"
 				else
 					retval=$?
 					warnx "$funcname(): [$pid] [$message]: workload failed: '$@'"
 				fi
+				debug 0 "$funcname(): [$@] ran"
 				message=END
 				;;
 			END)
+				debug 0 "$funcname(): [$@] finished"
 				break
 				;;
 			*)
