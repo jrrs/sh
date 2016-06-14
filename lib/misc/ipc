@@ -189,6 +189,8 @@ IPC_MASTER()
 	local backoff_amount=0
 	local backoff_attempts=0
 	local backoff_max_attempts=10
+	local cma=0 # https://en.wikipedia.org/wiki/Moving_average#Cumulative_moving_average
+	local cma_count=0
 	local currently_pending=0 # we've seen its PENDING, but have not removed child_lock
 	local currently_running=0 # we've seen its START, but not its END
 	local currently_signaled=0 # we removed child_lock, but have not seen a subsequent START
@@ -264,6 +266,9 @@ IPC_MASTER()
 					currently_pending=$(( currently_pending - 1 ))
 					;;
 				END)
+					# update cumulative moving average before we decrement currently_running
+					cma=$(( (currently_running + cma_count * cma) / (cma_count + 1) ))
+					cma_count=$(( cma_count + 1 ))
 					flag=0
 					# remove $pid from $running_pids, set flag if found
 					case $running_pids in
@@ -362,6 +367,8 @@ IPC_MASTER()
 					;;
 				STATUS)
 					if ! cat >"$IPC_DIR/status" <<- EOT
+						cma: "$cma"
+						cma_count: "$cma_count"
 						currently_pending: "$currently_pending"
 						currently_running: "$currently_running"
 						currently_signaled: "$currently_signaled"
@@ -564,6 +571,8 @@ IPC_MASTER()
 	debug 5 "$funcname(): [$message] shutting down"
 
 	if ! cat >"$IPC_DIR/status" <<- EOT
+		cma: "$cma"
+		cma_count: "$cma_count"
 		currently_pending: "$currently_pending"
 		currently_running: "$currently_running"
 		currently_signaled: "$currently_signaled"
