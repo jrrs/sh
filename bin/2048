@@ -44,6 +44,23 @@ score=0
 #   should, with one move Up, become 8 and 8, but instead becomes 16
 #
 
+# BUG:
+#
+# - premature exit: game met its quit condition while the following board was
+#   present:
+#
+# press q to quit, hjkl or wasd to move
+# .
+# .      2 |    2 |    8 |   64
+# . -------+------+------+-------
+# .      . |    4 |   64 |  128
+# . -------+------+------+-------
+# .      2 |   16 |   32 |  256
+# . -------+------+------+-------
+# .      8 |    8 |   16 |   64
+# .
+
+
 #
 #
 #   aaaa | bbbb | cccc | dddd
