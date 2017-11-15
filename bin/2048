@@ -28,6 +28,23 @@ usage()
 moves=0
 score=0
 
+# BUG:
+#
+# - game performs multiple collapses when it otherwise shouldn't.
+#   for instance:
+#
+#         4
+# ------------------------------
+#         4
+# ------------------------------
+#         8
+# ------------------------------
+#          
+#
+#   should, with one move Up, become 8 and 8, but instead becomes 16
+#
+
+#
 #
 #   aaaa | bbbb | cccc | dddd
 # -------+------+------+-------
