@@ -1,0 +1,3096 @@
+case $__script_lib_have_net_inet in
+1)
+	return 0
+	;;
+esac
+
+case $SCRIPT_LIB_ROOT in
+"")
+	_libroot=/usr/share/scriptlib
+	;;
+*)
+	_libroot=$SCRIPT_LIB_ROOT
+	;;
+esac
+
+. $_libroot/math/tobasen
+. $_libroot/string/err
+
+if [ $(( 1 << 31 )) -lt 0 ]; then
+	# pdksh can 'typeset' parameters as unsigned, however
+	# that is only for the presentation layer and internally
+	# they are still treated as signed
+	warnx "ERROR: shell is using signed integers, use a different one"
+	return 1
+elif [ $(( 1 << 31 )) -eq $(( 1 << 63 )) ]; then
+	warnx "ERROR: shell fails 64b sanity check, use a differnt one"
+	return 1
+fi
+
+#
+# the _posix versions of these functions are intended to be posix
+# compliant enough to be run under a strict /bin/sh, including ones
+# that do not support POSIX fully, such as dash.  they do
+# not take options, do not include input sanity checks, and their
+# output may be negative numbers.
+#
+# underscore functions are internal helpers.  sanity check arguments
+# prior to invoking them.
+# 
+
+#
+# spits out the broadcast addr for a given addr/prefix.
+#
+# if '/prefix' is omitted, assumes /32
+#
+# bcast = netmask ^ allones | network
+#
+cidr_bcast()
+{
+	local funcname=cidr_bcast
+	local usage="$funcname(): usage: $funcname ipv4_addr[/prefixlen] [...]"
+	local arg
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	local bcast=0
+	for arg in "$@"; do
+		if [ -z "$arg" ]; then
+			warn EINVAL "$funcname(): null \$arg"
+			return 1
+		fi
+		case $arg in
+		*/*)
+			;;
+		*)
+			arg=$arg/32
+			;;
+		esac
+		if ! bcast=$(cidr_bcast_posix "$arg"); then
+			warnx "$funcname(): failed cidr_bcast_posix for \$arg: '$arg'"
+			return 1
+		fi
+		echo $bcast
+	done
+}
+
+#
+# does not assume to add /32 if missing.
+#
+cidr_bcast_posix()
+{
+	local funcname=cidr_bcast_posix
+	local usage="$funcname(): usage: $funcname ipv4_addr/prefixlen [...]"
+	local allones=4294967295 bcast=0 network=0 netmask=0
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	for arg in "$@"; do
+		if ! netmask=$(cidr_ptonm_posix "$arg"); then
+			warnx "$funcname(): failed cidr_ptonm_posix for \$arg: '$arg'"
+			return 1
+		fi
+		if ! network=$(cidr_network_posix "$arg"); then
+			warnx "$funcname(): failed cidr_network_posix for \$arg: '$arg'"
+			return 1
+		fi
+		echo $(( $netmask ^ $allones | $network ))
+	done
+}
+
+#
+# spits out all the IPs belonging to whatever network is provided.
+#
+# assumes /32
+#
+cidr_ipdump()
+{
+	local funcname=cidr_ipdump
+	local usage="$funcname(): usage: $funcname ipv4_addr[/prefixlen] [...]"
+	local arg subnet
+	local network=0 bcast=0 i=0
+	for arg in "$@"; do
+		if [ -z "$arg" ]; then
+			warn EINVAL "$funcname(): null \$arg"
+			return 1
+		fi
+		case $arg in
+		*/*)
+			for subnet in $(cidr_network_split "$arg" 24); do
+				network=${subnet#*/}
+				#
+				# cidr_network_split will output 24s until it
+				# can't, (if it can at all).  any non /24
+				# in the output will be something else, and
+				# will be the last one, so just fall through
+				# to the rest of the normal loop at this point
+				#
+				if [ $network -ne 24 ]; then
+					break
+				fi
+				subnet=${subnet%.*}
+				i=0
+				while [ $i -le 255 ]; do
+					echo $subnet.$i
+					i=$(( $i + 1 ))
+				done
+				subnet=""
+			done
+			if [ -z "$subnet" ]; then
+				# we got all of them, don't fall through
+				continue
+			fi
+			;;
+		esac
+			
+			
+		if ! network=$(cidr_network "$arg"); then
+			warnx "$funcname(): failed cidr_network for \$arg: '$arg'"
+			return 1
+		fi
+		if ! bcast=$(cidr_bcast "$arg"); then
+			warnx "$funcname(): failed cidr_bcast for \$arg: '$arg'"
+			return 1
+		fi
+		while [ $network -le $bcast ]; do
+			if ! inet_ntoa "$network"; then
+				warnx "$funcname(): failed inet_ntoa for \$network: '$network'"
+				return 1
+			fi
+			network=$(( $network + 1 ))
+		done
+	done
+}
+
+cidr_ipdump_posix()
+{
+	local funcname=cidr_ipdump_posix
+	local arg addr
+	local bcast network
+	for arg in "$@"; do
+		if ! network=$(cidr_network_posix "$arg"); then
+			warnx "$funcname(): failed cidr_network_posix for \$arg: '$arg'"
+			return 1
+		fi
+		if ! bcast=$(cidr_bcast_posix "$arg"); then
+			warnx "$funcname(): failed cidr_bcast_posix for \$arg: '$arg'"
+			return 1
+		fi
+		while _signed_long_compare "$network" "$bcast"; do
+			if ! inet_ntoa_posix "$network"; then
+				warnx "$funcname(): failed inet_ntoa_posix for \$network: '$network'"
+				return 1
+			fi
+			network=$(( $network + 1 ))
+		done
+	done
+}
+
+#
+# if '/prefixlen' is missing /32 is assumed
+#
+# echos back network floor for each input.
+#
+# network = addr & netmask
+#
+# returns:
+# 0 if all found successfully
+# 1 if there is any failure
+#
+cidr_network()
+{
+	local funcname=cidr_network
+	local usage="$funcname(): usage: $funcname ipv4_addr[/prefixlen] [...]"
+	local addr arg prefixlen network
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	for arg in "$@"; do
+		if [ -z "$arg" ]; then
+			warn EINVAL "$funcname(): null \$arg"
+			return 1
+		fi
+		case $arg in
+		*/*)
+			addr=${arg%%/*}
+			prefixlen=${arg##*/}
+			if [ $arg != $addr/$prefixlen ]; then
+				# invalid input of some sort
+				warnx "$funcname(): invalid input of some sort"
+				warnx "$funcname(): \$arg: '$arg'"
+				warnx "$funcname(): \$addr: '$addr', \$prefixlen: '$prefixlen'"
+				return 1
+			fi
+			;;
+		*)
+			addr=$arg
+			prefixlen=32
+			;;
+		esac
+		if ! network=$(cidr_network_posix "$addr/$prefixlen"); then
+			warnx "$funcname(): failed cidr_network_posix for \$addr: '$addr'" \
+			    "\$prefixlen: '$prefixlen'"
+			return 1
+		fi
+		echo "$network"
+	done
+}
+
+cidr_network_posix()
+{
+	local funcname=cidr_network_posix
+	local mask=0 network=0 prefixlen=0
+	local arg addr
+	for arg in "$@"; do
+		addr=${arg%%/*}
+		prefixlen=${arg##*/}
+		if ! addr=$(inet_aton_posix "$addr"); then
+			warnx "$funcname(): failed inet_aton_posix for \$addr: '$addr'"
+			return 1
+		fi
+		if ! mask=$(cidr_ptonm_posix "$prefixlen"); then
+			warnx "$funcname(): failed cidr_ptonm_posix for \$prefixlen: '$prefixlen'"
+			return 1
+		fi
+		echo $(( $addr & $mask ))
+	done
+}
+
+#
+# if ipaddr/prefix is smaller or equal to splitlen, the ipaddr/prefix
+# is echoed back unchanged.  if it is larger than splitlen, the segments
+# *of the network given* are echoed back.
+#
+# in no case are any addresses fabricated
+#
+# examples:
+#
+# $ cidr_network_split 192.168.7.0/27 24
+# 192.168.7.0/27
+#
+# $ cidr_network_split 192.168.0.0/22 24
+# 192.168.0.0/24
+# 192.168.1.0/24
+# 192.168.2.0/24
+# 192.168.3.0/24
+#
+# $ cidr_network_split 192.168.0.0/22 23
+# 192.168.0.0/23
+# 192.168.2.0/23
+#
+cidr_network_split()
+{
+	local funcname=cidr_network_split
+	local usage="$funcname(): usage: $funcname addr/prefixlen splitlen"
+	local network diff prefixlen splitlen netmask splitmask bc
+	if ! network_addr=$(cidr_network "$1"); then
+		warnx "$funcname(): failed cidr_network() for \$1: '$1'"
+		warnx "$usage"
+		return 1
+	fi
+	# if cidr_network() passed, we know the prefixlen is good too
+	prefixlen=${1##*/}
+	if ! splitmask=$(cidr_ptonm "$2"); then
+		warnx "$funcname(): failed cidr_ptonm() for \$2: '$2'"
+		warnx "$usage"
+		return 1
+	fi
+	splitlen=$2
+	if ! network_string=$(inet_ntoa_posix "$network_addr"); then
+		warnx "$funcname(): failed inet_ntoa_posix() for \$network_addr: '$network_addr'"
+		return 1
+	fi
+	if [ $splitlen -le $prefixlen ]; then
+		echo "$network_string/$prefixlen"
+		return 0
+	fi
+	echo "$network_string/$splitlen"
+	# $diff shall basically be the number of nets we need to echo
+	diff=$(( $splitlen - $prefixlen ))
+	diff=$(( (1 << $diff) - 1 ))
+	while [ $diff -gt 0 ]; do
+		if ! bc=$(cidr_bcast_posix "$network_addr/$splitlen"); then
+			warnx "$funcname(): failed cidr_bcast_posix() for \$network_addr/\$splitlen: '$network_addr/$splitlen'"
+			return 1
+		fi
+		network_addr=$(( $bc + 1 ))
+		if ! network_string=$(inet_ntoa_posix "$network_addr"); then
+			warnx "$funcname(): failed inet_ntoa_posix() for \$network_addr: '$network_addr'"
+			return 1
+		fi
+		echo "$network_string/$splitlen"
+		diff=$(( $diff - 1 ))
+	done
+	return 0
+}
+
+#
+# echos back the smallest cidr block that would encapsulate all the
+# IPs given.   this is *NOT* a contiguous addr supernetter.
+#
+cidr_netrange()
+{
+	local funcname=cidr_netrange
+	local usage="$funcname(): usage: $funcname ipaddr [...]"
+	local bit=32 allones=4294967295
+	local lo hi
+	local common_ones checkme
+
+	# use $1 as a preload:
+	if ! arg=$(inet_aton $1); then
+		warnx "$funcname(): failed inet_aton for \$1: '$1'"
+		return 1
+	fi
+	hi=$arg lo=$arg
+	for arg in "$@"; do
+		if ! arg=$(inet_aton "$arg"); then
+			warnx "$funcname(): failed inet_aton for \$arg: '$arg'"
+			return 1
+		fi
+		if [ $arg -ne $lo ]; then
+			if _signed_long_compare "$arg" "$lo"; then
+				lo=$arg
+			fi
+		fi
+		if [ $arg -ne $hi ]; then
+			if _signed_long_compare "$hi" "$arg"; then
+				hi=$arg
+			fi
+		fi
+	done
+	common_ones=$(( $allones ^ $hi ^ $lo ))
+	while [ $bit -ge 0 ]; do
+		bit=$(( $bit - 1 ))
+		checkme=$(( $common_ones & (1 << $bit) ))
+		if [ $checkme -eq 0 ]; then
+			break
+		fi
+	done
+	bit=$(( $bit + 1 ))
+	bit=$(( 32 - $bit ))
+	lo=$(cidr_network "$lo/$bit")
+	hi=$(cidr_network "$hi/$bit")
+	if [ $lo -eq $hi ]; then
+		if ! lo=$(inet_ntoa "$lo"); then
+			warnx "$funcname(): failed inet_ntoa for \$lo: '$lo'"
+			return 1
+		fi
+		echo $lo/$bit
+		return 0
+	fi
+	return 1
+}
+
+#
+# returns 1 for any encountered error
+# returns 0 if processing was succesful
+#
+# There is no requirement as to the order of the input list and
+# similarly no guarantee as to the order of the output list.
+# 
+# However, in the current implementation :
+#
+# The following is an insertion-sort where the sort order
+# is by descending CIDR length (so that if we merge adjacent
+# networks we can just go on and get a chance to merge with
+# bigger networks instead of backtracking).
+# Optionally the base IP can be a secondary sort key if the
+# basesort local variable is set to 1, but since the primary
+# sort key is already counter-intuitive does it really matter ?
+#
+cidr_supernet()
+{
+	local funcname=cidr_supernet
+	local usage="$funcname(): usage: $funcname ipaddr [...]"
+	local basesort=0
+
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	elif [ $# -eq 1 ] && [ X"$1" = X- ]; then
+		local REPLY
+		shift
+		while read REPLY; do
+			# Do not let the shell glob $REPLY
+			set -- "$@" "$REPLY"
+		done
+		if [ $# -eq 0 ]; then
+			warn EINVAL
+			warnx "$usage"
+			return 1
+		fi
+	fi
+
+	local base mask curbase curmask supbase supmask
+
+	local allones=4294967295 sign=2147483648
+	local arg curarg
+	local basestr
+	local len curlen suplen
+	local blocks
+	local in
+	local new
+
+	for arg in "$@"; do
+
+		debug "$funcname(): $LINENO processing \$arg: '$arg'"
+
+		case $arg in
+		"")
+			warn EINVAL "$funcname(): null \$arg"
+			return 1
+			;;
+		*/*)
+			basestr=${arg%/*}
+			len=${arg##*/}
+
+			# Basic checks.
+			case $len in
+			*[!0-9]*)
+				warn EINVAL "$funcname(): non-numeric \$len: '$len'"
+				return 1
+				;;
+			"")
+				warn EINVAL "$funcname(): null \$len"
+				return 1
+				;;
+			esac
+
+			if [ $len -lt 0 ] || [ $len -gt 32 ]; then
+				warn EDOM "$funcname(): \$len less than 0 or greater than 32: '$len'"
+				return 1
+			fi
+			;;
+		*)
+			basestr=$arg
+			len=32
+			;;
+		esac
+
+		# Basic check so inet_aton won't puke.
+		if ! isipv4 "$basestr"; then
+			warnx "$funcname(): failed isipv4() for \$basestr: '$basestr'"
+			return 1
+		fi
+
+		# From now on, we deal with $base/$len/$mask
+		# where $base and $mask are 32-bit unsigned int.
+		mask=$(($allones & ($allones << (32 - $len))))
+		if ! base=$(inet_aton $basestr); then
+			warnx "$funcname(): failed inet_aton() for \$basestr: '$basestr'"
+			return 1
+		fi
+		base=$(($base & $mask))
+
+		# The following will be used to test for adjacency.
+		suplen=$(($len - 1))
+		supmask=$(($allones & ($allones << (32 - $suplen))))
+		supbase=$(($base & $supmask))
+
+		# Taking input from $blocks (the sorted list so far),
+		# build a new list in $new
+		set -- $blocks
+
+		in=0
+		new=
+
+		while [ $# -gt 0 ]; do
+			curarg=$1
+			curbase=${curarg%%/*}
+			curmask=${curarg##*/}
+			shift
+
+			debug "$funcname(): $LINENO comparing with $curarg aka $curbase/$curmask"
+
+			if [ $(($curmask ^ $mask)) -eq 0 ]; then
+				# Masks are identical.
+
+				# Punt if we have an exact match.
+				if [ $(($curbase ^ $base)) -eq 0 ]; then
+					continue 2
+				fi
+
+				# Test for adjacency : same supernet but
+				# equality would have been caught above.
+				if [ $((($curbase & $supmask) ^ $supbase)) -eq 0 ]; then
+					# Replace with parent network.
+					len=$suplen
+					mask=$supmask
+					base=$supbase
+
+					suplen=$(($len - 1))
+					supmask=$(($allones & ($allones << (32 - $suplen))))
+					supbase=$(($base & $supmask))
+
+					# Resume as if we had been working
+					# on the parent network all along.
+					continue
+				fi
+
+				# No relationship.
+
+				# If we don't care about the order of
+				# the base IP addresses, just skip over
+				# all networks of the same size.
+				if [ $basesort -eq 0 ]; then
+					new="$new $curarg"
+					continue
+				fi
+
+				# Otherwise, sort by base IP.
+				if [ $in -eq 1 ]; then
+					# We already found a place for
+					# this network. Just copy the
+					# remaining networks of same size.
+					new="$new $curarg"
+				elif [ $curbase -eq $base ]; then
+					# Uh oh ! We shouldn't be here !
+					# But this is an exact match anyway.
+					# We punt.
+					continue 2
+				elif [ $((($curbase ^ $base) & $sign)) -ne 0 ]; then
+					# pdksh has a problem with comparing
+					# large unsigned integers, if the
+					# sign-bit doesn't match.
+					# Handle this case manually.
+					if [ $(($curbase & $sign)) -ne 0 ]; then
+						# Current base is the one
+						# with the sign-bit set and
+						# is therefore bigger.
+						# Move on.
+						new="$new $curarg"
+					else
+						# Insert the new network.
+						new="$new $base/$len/$mask $curarg"
+						in=1
+					fi
+				elif [ $curbase -gt $base ]; then
+					# Still dealing with bigger bases.
+					# Move on.
+					new="$new $curarg"
+				else 
+					# Insert the new network.
+					new="$new $base/$len/$mask $curarg"
+					in=1
+				fi
+			elif [ $((($curmask & $mask) ^ $mask)) -eq 0 ]; then
+				# Smaller network with longer mask.
+				# Equal length was ruled out above.
+
+				# Only keep smaller networks that are
+				# not covered by the new network.
+				if [ $((($curbase & $mask) ^ $base)) -ne 0 ]; then
+					new="$new $curarg"
+				fi
+			else
+				# Now dealing with bigger networks.
+
+				# Punt if the current network already covers
+				# the new network.
+				if [ $((($base & $curmask) ^ $curbase)) -eq 0 ]; then
+
+					continue 2
+				fi
+
+				# Insert new network before bigger ones
+				# if not yet done.
+				# We may be covered by a bigger network
+				# later on but in that case $new is
+				# discarded anyway (see above).
+				if [ $in -eq 0 ]; then
+					new="$new $base/$len/$mask"
+					in=1
+				fi
+
+				# No relationship, move on.
+				new="$new $curarg"
+			fi
+		done
+
+		# No previous opportunities to insert this network ?
+		# Do it now.
+		if [ $in -eq 0 ]; then
+			new="$new $base/$len/$mask"
+		fi
+
+		blocks=$new
+
+	done
+
+	# Output list in human-readable format.
+	set -- $blocks
+	blocks=
+	while [ $# -gt 0 ]; do
+		basestr=${1%/*}
+		shift
+
+		len=${basestr##*/}
+		if ! basestr=$(inet_ntoa ${basestr%%/*}); then
+			warn "$funcname(): failed inet_ntoa() for \${basestr%%/*}: '${basestr%%/*}'"
+			return 1
+		fi
+
+		case $blocks in
+		"")
+			blocks=$basestr/$len
+			;;
+		*)
+			# Reversing order since the list was built
+			# in descending order.
+			blocks="$basestr/$len $blocks"
+			;;
+		esac
+	done
+
+	echo "$blocks"
+}
+
+#
+# returns 0 if $1 is contained within $2, 1 otherwise
+#
+# /32 assumed for prefixlens if not specified.
+# (see cidr_network())
+#
+cidr_isin()
+{
+	local funcname=cidr_isin
+	local usage="$funcname(): usage: $funcname addr[/prefixlen] addr[/prefixlen]"
+	local containee_addr containee_mask
+	local container_addr container_mask
+	local result
+
+	case $1 in
+	*/*)
+		containee_addr=${1%/*}
+		containee_mask=${1#*/}
+		;;
+	*)
+		containee_addr=$1
+		containee_mask=32
+		;;
+	esac
+
+	case $2 in
+	*/*)
+		container_addr=${2%/*}
+		container_mask=${2#*/}
+		;;
+	*)
+		container_addr=$2
+		container_mask=32
+		;;
+	esac
+
+	containee_addr=$(cidr_network_posix "$containee_addr/$containee_mask")
+	containee_mask=$(cidr_ptonm_posix "$containee_mask")
+	container_addr=$(cidr_network_posix "$container_addr/$container_mask")
+	container_mask=$(cidr_ptonm_posix "$container_mask")
+	if ! _signed_long_compare "$container_mask" "$containee_mask"; then
+		return 1
+	fi
+
+	result=$(( $containee_addr & $container_mask ))
+	if [ $result -eq $container_addr ]; then
+		return 0
+	fi
+	return 1
+}
+
+#
+# convert prefixlen to integer netmask
+#
+# supplying the ipv4_addr part is optional and is stripped off
+# and ignored if present.
+#
+# returns:
+# 0 if all found successfully
+# 1 if there is any failure
+#
+cidr_ptonm()
+{
+	local funcname=cidr_ptonm
+	local usage="$funcname(): usage: $funcname [ipv4_addr/]prefixlen [...]"
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	local mask=0
+	local arg prefixlen
+	for arg in "$@"; do
+		if [ -z "$arg" ]; then
+			warn EINVAL "$funcname(): null \$arg"
+			return 1
+		fi
+		case $arg in
+		*/*)
+			prefixlen=${arg##*/}
+			addr=${arg%%/*}
+			if [ $arg != $addr/$prefixlen ]; then
+				# invalid input of some sort
+				warnx "$funcname(): invalid input of some sort"
+				warnx "$funcname(): \$arg: '$arg'"
+				warnx "$funcname(): \$addr: '$addr', \$prefixlen: '$prefixlen'"
+				return 1
+			fi
+			;;
+		*)
+			prefixlen=$arg
+			;;
+		esac
+		case $prefixlen in
+		*[!0-9]*)
+			warn EINVAL "$funcname(): non-numeric \$prefixlen: '$prefixlen'"
+			return 1
+			;;
+		esac
+		if [ $prefixlen -lt 0 ] || [ $prefixlen -gt 32 ]; then
+			warn EDOM "$funcname(): \$prefixlen less than 0 or greater than 32: '$prefixlen'"
+			return 1
+		fi
+		if ! mask=$(_cidr_ptonm_bitwise_posix $prefixlen); then
+			warnx "$funcname(): failed _cidr_ptonm_bitwise_posix for \$prefixlen: '$prefixlen'"
+			return 1
+		fi
+		echo $mask
+	done
+}
+
+#
+# converts netmask to integer prefixlen
+#
+# supplying the ipv4_addr part is optional and is stripped off
+# and ignored if present.
+#
+# returns:
+# 0 if all found successfully
+# 1 if there is any failure
+#
+cidr_nmtop()
+{
+	local funcname=cidr_nmtop
+	local usage="$funcname(): usage: $funcname [ipv4_addr/]prefixlen [...]"
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	local allones=4294967295 bit=0 mask=2147483648
+	local arg check
+	for arg in "$@"; do
+		if [ -z "$arg" ]; then
+			warn EINVAL "$funcname(): null \$arg"
+			return 1
+		fi
+		if ! arg=$(inet_aton $arg); then
+			warnx "$funcname(): failed inet_aton for \$arg: '$arg'"
+			return 1
+		fi
+		while true; do
+			if [ $bit -gt 32 ]; then
+				warn EDOM "$funcname(): \$bit: '$bit' greater than 32"
+				return 1
+			fi
+			# check 31st bit for 1 or 0
+			check=$(( $arg & $mask ^ $mask ))
+			if [ $check -ne 0 ]; then
+				# was a zero in that bit
+				break
+			fi
+			arg=$(( $arg << 1 & $allones ))	
+			bit=$(( $bit + 1 ))
+		done
+		if [ $arg -ne 0 ]; then
+			warnx "$funcname(): \$arg not valid netmask: '$arg'"
+			return 1
+		fi
+		echo $bit
+	done
+}
+
+cidr_ptonm_posix()
+{
+	local funcname=cidr_ptonm_posix
+	local arg prefixlen val
+	for arg in "$@"; do
+		case $arg in
+		*/*)
+			prefixlen=${arg##*/}
+			;;
+		*)
+			prefixlen=$arg
+			;;
+		esac
+		if ! _cidr_ptonm_bitwise_posix $prefixlen; then
+			warnx "$funcname(): failed _cidr_ptonm_bitwise_posix() for \$prefixlen: '$prefixlen'"
+			return 1
+		fi
+	done
+}
+
+_cidr_ptonm_bitwise_posix()
+{
+	local funcname=_cidr_ptonm_bitwise_posix
+	local allones=4294967295 arg bitshift mask
+	for arg in "$@"; do
+		bitshift=0
+		mask=$(( $allones )) # arith subs here to get 32 consistent with 31
+		case $arg in
+		*[!0-9]*)
+			case $arg in
+			*.*)
+				if ! arg=$(cidr_nmtop "$arg"); then
+					warnx "$funcname(): failed cidr_nmtop() for \$arg: '$arg'"
+					return 1
+				fi
+				;;
+			esac
+			;;
+		*)
+			if [ $arg -gt 32 ]; then
+				if ! arg=$(cidr_nmtop "$arg"); then
+					warn EDOM "$funcname(): failed cidr_nmtop() for \$arg: '$arg'"
+					return 1
+				fi
+			fi
+			;;
+		esac
+		
+		while [ $arg -lt 32 ]; do
+			arg=$(( $arg + 1 ))
+			mask=$(( $mask ^ (1 << $bitshift) ))
+			bitshift=$(( $bitshift + 1 ))
+		done
+		echo $mask 
+	done
+}
+
+_cidr_ptonm_precalc_posix()
+{
+	local funcname=_cidr_ptonm_precalc_posix
+	local arg
+	for arg in "$@"; do
+		case $arg in
+		32) echo 4294967295 ; continue ;;
+		31) echo 4294967294 ; continue ;;
+		30) echo 4294967292 ; continue ;;
+		29) echo 4294967288 ; continue ;;
+		28) echo 4294967280 ; continue ;;
+		27) echo 4294967264 ; continue ;;
+		26) echo 4294967232 ; continue ;;
+		25) echo 4294967168 ; continue ;;
+		24) echo 4294967040 ; continue ;;
+		23) echo 4294966784 ; continue ;;
+		22) echo 4294966272 ; continue ;;
+		21) echo 4294965248 ; continue ;;
+		20) echo 4294963200 ; continue ;;
+		19) echo 4294959104 ; continue ;;
+		18) echo 4294950912 ; continue ;;
+		17) echo 4294934528 ; continue ;;
+		16) echo 4294901760 ; continue ;;
+		15) echo 4294836224 ; continue ;;
+		14) echo 4294705152 ; continue ;;
+		13) echo 4294443008 ; continue ;;
+		12) echo 4293918720 ; continue ;;
+		11) echo 4292870144 ; continue ;;
+		10) echo 4290772992 ; continue ;;
+		09) echo 4286578688 ; continue ;;
+		 9) echo 4286578688 ; continue ;;
+		08) echo 4278190080 ; continue ;;
+		 8) echo 4278190080 ; continue ;;
+		07) echo 4261412864 ; continue ;;
+		 7) echo 4261412864 ; continue ;;
+		06) echo 4227858432 ; continue ;;
+		 6) echo 4227858432 ; continue ;;
+		05) echo 4160749568 ; continue ;;
+		 5) echo 4160749568 ; continue ;;
+		04) echo 4026531840 ; continue ;;
+		 4) echo 4026531840 ; continue ;;
+		03) echo 3758096384 ; continue ;;
+		 3) echo 3758096384 ; continue ;;
+		02) echo 3221225472 ; continue ;;
+		 2) echo 3221225472 ; continue ;;
+		01) echo 2147483648 ; continue ;;
+		 1) echo 2147483648 ; continue ;;
+		00) echo 0 ; continue ;;
+		 0) echo 0 ; continue ;;
+		esac
+		warnx "$funcname(): unknown \$arg: '$arg'"
+		return 1
+	done
+}
+
+addr_hex_to_dec()
+{
+	local funcname=addr_hex_to_dec
+	local usage="$funcname(): usage: $funcname addr [...]"
+	local addr output octet octets padded_octets translated_octets
+
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+
+	for addr in "$@"; do
+		output=""
+		if ! octets=$(echo "$addr" | tr ':' ' '); then
+			warnx "$funcname(): failed tr(1) for \$addr: '$addr'"
+			return 1
+		fi
+
+		# pad with 0x so shell sees as hex
+		padded_octets=""
+		for octet in $octets; do
+			if [ ${#padded_octets} -eq 0 ]; then
+				padded_octets=0x${octet}
+			else
+				padded_octets="$padded_octets 0x${octet}"
+			fi
+		done
+	
+		if ! translated_octets=$(echo "$padded_octets" | tobasen 10); then
+			warnx "$funcname(): failed tobasen() for \$octets: '$padded_octets'"
+			return 1
+		fi
+
+		for octet in $translated_octets; do
+			if [ -z "$octet" ]; then
+				warn EINVAL "$funcname(): null \$octet from \$translated_octets: '$translated_octets'"
+				warnx "$funcname(): original input: '$addr'"
+				return 1
+			fi
+			if [ $octet -lt 0 ]; then
+				warnx "$funcname(): \$octet less than 0: '$octet'"
+				warnx "$funcname(): original input: '$addr'"
+				return 1
+			elif [ $octet -gt 255 ]; then
+				warnx "$funcname(): \$octet greater than 255: '$octet'"
+				warnx "$funcname(): original input: '$addr'"
+				return 1
+			fi
+
+			if [ ${#output} -eq 0 ]; then
+				output=$octet
+			else
+				output=${output}.${octet}
+			fi
+		done
+		echo "$output"
+	done
+}
+
+addr_dec_to_hex()
+{
+	local funcname=addr_dec_to_hex
+	local usage="$funcname(): usage: $funcname addr [...]"
+	local addr output octet octets translated_octets
+
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+
+	for addr in "$@"; do
+		output=""
+		if ! octets=$(echo "$addr" | tr '.' ' '); then
+			warnx "$funcname(): failed tr(1) for \$addr: '$addr'"
+			return 1
+		fi
+		for octet in $octets; do
+			if [ -z "$octet" ]; then
+				warn EINVAL "$funcname(): null \$octet from \$octets: '$octets'"
+				warnx "$funcname(): original input: '$addr'"
+				return 1
+			fi
+			if [ $octet -lt 0 ]; then
+				warnx "$funcname(): \$octet less than 0: '$octet'"
+				warnx "$funcname(): original input: '$addr'"
+				return 1
+			elif [ $octet -gt 255 ]; then
+				warnx "$funcname(): \$octet greater than 255: '$octet'"
+				warnx "$funcname(): original input: '$addr'"
+				return 1
+			fi
+		done
+
+		if ! translated_octets=$(echo "$octets" | tobasen 16); then
+			warnx "$funcname(): failed tobasen() for \$octets: '$octets'"
+			return 1
+		fi
+		for octet in $translated_octets; do
+			# pad with initial 0 if single char
+			if [ ${#octet} -eq 1 ]; then
+				octet=0${octet}
+			fi
+			if [ ${#output} -eq 0 ]; then
+				output=$octet
+			else
+				output=${output}:${octet}
+			fi
+		done
+		echo "$output"
+	done
+}
+
+#
+# converts dot-notation addresses into their integer equivalents
+#
+# XXX need to safely translate 0xBLAH, 0BLAH from hex and octal into decimal
+# because the pdksh in debian -stable doesn't support this nomenclature, but
+# it is a valid invocation.
+#
+inet_aton()
+{
+	local funcname=inet_aton
+	local usage="$funcname(): usage: $funcname addr [...]"
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	local arg
+	local num=0
+	for arg in "$@"; do
+		if [ -z "$arg" ]; then
+			warn EINVAL "$funcname(): null \$arg"
+			return 1
+		fi
+		if ! num=$(inet_aton_posix $arg); then
+			warnx "$funcname(): failed inet_aton_posix() for \$arg: '$arg'"
+			return 1
+		fi
+		echo $num
+	done
+}
+
+inet_aton_posix()
+{
+	local funcname=inet_aton_posix
+	local allones=4294967295
+	local arg bitshift num part
+	for arg in "$@"; do
+		case $arg in
+		"")
+			continue
+			;;
+		*[!0-9.]*)
+			warn EINVAL "$funcname(): non-numeric \$arg: '$arg'"
+			return 1
+			;;
+		esac
+		num=0
+		bitshift=24
+		while true; do
+			part=${arg%%.*}
+
+			if [ $bitshift -lt 0 ]; then
+				warn EDOM "$funcname(): \$bitshift less than 0: '$bitshift'"
+				return 1
+			elif [ $bitshift -lt 8 ]; then
+				if [ "$part" -gt 255 ]; then
+					warn EDOM "$funcname(): \$part greater than 255: '$part'"
+					return 1
+				fi
+			elif [ $bitshift -lt 16 ]; then
+				if [ "$part" -gt 65535 ]; then
+					warn EDOM "$funcname(): \$part greater than 65535: '$part'"
+					return 1
+				fi
+			elif [ $bitshift -lt 24 ]; then
+				if [ "$part" -gt 16777215 ]; then
+					warn EDOM "$funcname(): \$part greater than 16777215: '$part'"
+					return 1
+				fi
+			elif [ $bitshift -lt 32 ]; then
+				if [ "$part" -gt $allones ]; then
+					warn EDOM "$funcname(): \$part greater than ALLONES: '$part'"
+					return 1
+				fi
+			else
+				return 1
+			fi
+
+			case $arg in
+			*.*)
+				;;
+			*)
+				# break if we don't have a period in the string still
+				break
+				;;
+			esac
+
+			if [ -z "$part" ] || [ $part -gt 255 ]; then
+				warnx "$funcname(): invalid \$part: '$part'"
+				return 1
+			fi
+			num=$(( $num | $part << $bitshift ))
+			arg=${arg#$part.}
+			bitshift=$(( $bitshift - 8 ))
+		done
+		echo $(( ($num | $arg) & $allones ))
+	done
+}
+
+#
+# takes an internet address and returns a string representing the addr in
+# dotted quad notation.
+#
+inet_ntoa()
+{
+	local funcname=inet_ntoa
+	local usage="$funcname(): usage: $funcname int32 [...]"
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	local arg
+	for arg in "$@"; do
+		if ! inet_ntoa_posix $arg; then	
+			warnx "$funcname(): failed inet_ntoa_posix for \$arg: '$arg'"
+			return 1
+		fi
+	done
+}
+
+inet_ntoa_posix()
+{
+	local funcname=inet_ntoa_posix
+	local arg
+	for arg in "$@"; do
+		echo $(( $arg >> 24 & 255 )).$(( $arg >> 16 & 255 )).$(( $arg >> 8 & 255 )).$(( $arg & 255 ))
+	done
+}
+
+#
+# invokes isipv4_network and isipv6_network
+#
+# returns 0 if either succeeds for all given input
+# returns 1 if both fail for any given input
+#
+# it's ok to give an IP without a network
+# XXX - only CIDR networks supported (0-32 or 0-128), not
+# dottedquad/colonhex form (/255.255.255.0)
+#
+isip_network()
+{
+	local funcname=isip_network
+	local usage="$funcname(): usage: $funcname string [...]"
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	local arg
+	for arg in "$@"; do
+		if [ -z "$arg" ]; then
+			debug 2 "$funcname(): null \$arg"
+			return 1
+		fi
+		if isipv4_network "$arg"; then
+			continue
+		fi
+		if isipv6_network "$arg"; then
+			continue
+		fi
+		debug 2 "$funcname(): \$arg not an IP/network: '$arg'"
+		return 1
+	done
+	return 0
+}
+
+#
+# returns 0 if input matches valid dotted-quad IPv4 addresses/networks
+# returns 1 if at least one character is not valid for the above.
+#
+isipv4_network()
+{
+	local funcname=isipv4_network
+	local usage="$funcname(): usage: $funcname string [...]"
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	local arg octet members=0 network
+	for arg in "$@"; do
+		if [ -z "$arg" ]; then
+			debug 2 "$funcname(): null \$arg"
+			return 1
+		fi
+		case $arg in
+		*/[0-9] | */[0-9][0-9])
+			network=${arg#*/}
+			arg=${arg%%/*}
+			if [ $network -lt 0 ] || [ $network -gt 32 ]; then
+				debug 2 "$funcname(): bad network size: '$network'"
+				return 1
+			fi
+			;;
+		esac
+		members=0
+		case $arg in
+		*[!0-9.]*)
+			debug 2 "$funcname(): invalid character in \$arg: '$arg'"
+			return 1
+			;;
+		*..*|.*|*.)
+			debug 2 "$funcname(): illegal construct in \$arg: '$arg'"
+			return 1
+			;;
+		esac
+		while [ ! -z "$arg" ]; do
+			octet=${arg%%.*}
+			if [ $octet -lt 0 ] || [ $octet -gt 255 ]; then
+				debug 2 "$funcname(): \$octet less than 0 or greater than 32: '$octet'"
+				return 1
+			fi 
+			arg=${arg#$octet}
+			arg=${arg#.}
+			members=$(( $members + 1 ))
+		done
+		if [ $members -ne 4 ]; then
+			debug 2 "$funcname(): \$members must be 4: '$members'"
+			return 1
+		fi
+	done
+	return 0 
+}
+
+#
+# returns 0 if input matches valid coloned-hex IPv6 addresses/networks
+# returns 1 if at least one character is not valid for the above.
+#
+# interface scoping syntax is allowed, but the zone-ID (the thing after the %)
+# is currently not checked.  draft-ietf-ipv6-scoping-arch-02.txt is pretty
+# fast and loose about what can be used
+#
+isipv6_network()
+{
+	local funcname=isipv6_network
+	local usage="$funcname(): usage: $funcname string [...]"
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	local addr addr_copy arg ifacescope double members=0 network
+	for arg in "$@"; do
+		if [ -z "$arg" ]; then
+			debug 2 "$funcname(): null \$arg"
+			return 1
+		fi
+		case $arg in
+		*/[0-9] | */[0-9][0-9] | */[0-9][0-9][0-9])
+			network=${arg#*/}
+			arg=${arg%%/*}
+			if [ $network -lt 0 ] || [ $network -gt 128 ]; then
+				debug 2 "$funcname(): bad network size: '$network'"
+				return 1
+			fi
+			;;
+		esac
+		case $arg in
+		*%*)
+			addr=${arg%\%*}
+			ifacescope=${arg#*%}
+			;;
+		*)
+			addr=$arg
+			ifacescope=""
+			;;
+		esac
+		
+		case $addr in
+		*[!a-fA-F0-9:]*)
+			debug 2 "$funcname(): invalid character in \$addr: '$addr'"
+			return 1
+			;;
+		*::*::*)
+			debug 2 "$funcname(): '::' cannot be used more than once: \$addr: '$addr'"
+			return 1
+			;;
+		*:::*)
+			debug 2 "$funcname(): ':::' illegal construct in \$addr: '$addr'"
+			return 1
+			;;
+		esac
+		members=0
+		addr_copy=$addr
+		while [ ! -z "$addr_copy" ]; do
+			members=$(( $members + 1 ))
+			double=${addr_copy%%:*}
+			case $double in
+			*?????*)
+				debug 2 "$funcname(): too many characters in \$double: '$double'"
+				return 1
+				;;
+			esac
+			addr_copy=${addr_copy#$double}
+			# might be two colons; ## is the wrong move.
+			addr_copy=${addr_copy#:}
+			addr_copy=${addr_copy#:}
+		done
+		case $addr in
+		*::*)
+			;;
+		*)
+			# if no '::' then all doubles must be present
+			if [ $members -ne 8 ]; then
+				debug 2 "$funcname(): \$members must be 8: '$members' in \$addr '$addr'"
+				return 1
+			fi
+			;;
+		esac
+	done
+	return 0 
+}
+
+#
+# invokes isipv4 and isipv6
+#
+# returns 0 if either succeeds for all given input
+# returns 1 if both fail for any given input
+#
+isip()
+{
+	local funcname=isip
+	local usage="$funcname(): usage: $funcname string [...]"
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	local arg
+	for arg in "$@"; do
+		if [ -z "$arg" ]; then
+			debug 2 "$funcname(): null \$arg"
+			return 1
+		fi
+		if isipv4 "$arg"; then
+			continue
+		fi
+		if isipv6 "$arg"; then
+			continue
+		fi
+		debug 2 "$funcname(): \$arg not an IP: '$arg'"
+		return 1
+	done
+	return 0
+}
+
+#
+# returns 0 if input matches valid dotted-quad IPv4 addresses
+# returns 1 if at least one character is not valid for the above.
+#
+# it'd be nice to be more flexible about the allowable numeric
+# value range of the octets, but currently this function tests for
+# dotted-quad only, not the fancy crap inet_aton can do.
+#
+isipv4()
+{
+	local funcname=isipv4
+	local usage="$funcname(): usage: $funcname string [...]"
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	local arg octet members=0
+	for arg in "$@"; do
+		if [ -z "$arg" ]; then
+			debug 2 "$funcname(): null \$arg"
+			return 1
+		fi
+		members=0
+		case $arg in
+		*[!0-9.]*)
+			debug 2 "$funcname(): invalid character in \$arg: '$arg'"
+			return 1
+			;;
+		*..*|.*|*.)
+			debug 2 "$funcname(): illegal construct in \$arg: '$arg'"
+			return 1
+			;;
+		esac
+		while [ ! -z "$arg" ]; do
+			octet=${arg%%.*}
+			if [ $octet -lt 0 ] || [ $octet -gt 255 ]; then
+				debug 2 "$funcname(): \$octet less than 0 or greater than 32: '$octet'"
+				return 1
+			fi 
+			arg=${arg#$octet}
+			arg=${arg#.}
+			members=$(( $members + 1 ))
+		done
+		if [ $members -ne 4 ]; then
+			debug 2 "$funcname(): \$members must be 4: '$members'"
+			return 1
+		fi
+	done
+	return 0 
+}
+
+#
+# returns 0 if input matches valid coloned-hex IPv6 addresses
+# returns 1 if at least one character is not valid for the above.
+#
+# interface scoping syntax is allowed, but the zone-ID (the thing after the %)
+# is currently not checked.  draft-ietf-ipv6-scoping-arch-02.txt is pretty
+# fast and loose about what can be used
+#
+isipv6()
+{
+	local funcname=isipv6
+	local usage="$funcname(): usage: $funcname string [...]"
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	local arg
+	local addr addr_copy
+	local ifacescope
+	local double
+	local members=0
+	for arg in "$@"; do
+		if [ -z "$arg" ]; then
+			debug 2 "$funcname(): null \$arg"
+			return 1
+		fi
+		case $arg in
+		*%*)
+			addr=${arg%\%*}
+			ifacescope=${arg#*%}
+			;;
+		*)
+			addr=$arg
+			ifacescope=""
+			;;
+		esac
+		case $addr in
+		*[!a-fA-F0-9:]*)
+			debug 2 "$funcname(): invalid character in \$addr: '$addr'"
+			return 1
+			;;
+		*::*::*)
+			debug 2 "$funcname(): '::' cannot be used more than once: \$addr: '$addr'"
+			return 1
+			;;
+		*:::*)
+			debug 2 "$funcname(): ':::' illegal construct in \$addr: '$addr'"
+			return 1
+			;;
+		esac
+		members=0
+		addr_copy=$addr
+		while [ ! -z "$addr_copy" ]; do
+			members=$(( $members + 1 ))
+			double=${addr_copy%%:*}
+			case $double in
+			*?????*)
+				debug 2 "$funcname(): too many characters in \$double: '$double'"
+				return 1
+				;;
+			esac
+			addr_copy=${addr_copy#$double}
+			# might be two colons; ## is the wrong move.
+			addr_copy=${addr_copy#:}
+			addr_copy=${addr_copy#:}
+		done
+		case $addr in
+		*::*)
+			;;
+		*)
+			# if no '::' then all doubles must be present
+			if [ $members -ne 8 ]; then
+				debug 2 "$funcname(): \$members must be 8: '$members' in \$addr '$addr'"
+				return 1
+			fi
+			;;
+		esac
+	done
+	return 0 
+}
+
+#
+# returns 0 if input matches RFC1918 IP space.
+# returns 1 if at least one input string is non RFC1918.
+# returns 127 if input is not a valid IPv4 IP.
+#
+isrfc1918()
+{
+	local funcname=isrfc1918
+	local usage="$funcname(): usage: $funcname string [...]"
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	local arg
+	for arg in "$@"; do
+		if [ -z "$arg" ]; then
+			debug 2 "$funcname(): null \$arg"
+			return 127
+		fi
+		if ! isipv4 $arg; then
+			debug 2 "$funcname(): failed isipv4() for \$arg: '$arg'"
+			return 127
+		fi
+		#
+		# we can afford to be fast'n'loose here
+		# because we already called isipv4
+		#
+		case $arg in
+		10.*)
+			continue
+			;;
+		172.1[6-9].*)
+			continue
+			;;
+		172.2[0-9].*)
+			continue
+			;;
+		172.3[01].*)
+			continue
+			;;
+		192.168.*)
+			continue
+			;;
+		*)
+			debug 2 "$funcname(): \$arg not a 1918 IP: '$arg'"
+			return 1
+			;;
+		esac
+	done
+	return 0
+}
+
+#
+# very simple wrapper for ping(1) who returns 0 on success or
+# emits stderr in a warnx'd container and returns 1 otherwise.
+#
+# -x -- tells is_up to make $tries attempts.  if any one of them
+#       succeeds, a success is returned, if all fail, returns fail.
+#       (this is meant to insulate against fails positives from hosts
+#        with sporadic packet loss)
+#
+is_up()
+{
+	local funcname=is_up
+	local usage="$funcname(): usage: $funcname [-46] [-c count] [-w wait] [-x tries] target [...]"
+	local ch err target i ip_ver
+	local count=2 tries=1 wait=2
+
+	OPTIND=1
+	while getopts 46c:w:x: ch; do
+		case $ch in
+		4)
+			ip_ver=4
+			;;
+		6)
+			ip_ver=6
+			;;
+		c)
+			count=$OPTARG
+			;;
+		w)
+			wait=$OPTARG
+			;;
+		x)
+			tries=$OPTARG
+			;;
+		esac
+	done
+	if [ $# -gt 1 ]; then
+		shift $(( $OPTIND - 1 ))
+	fi
+
+	case $tries in
+	*[!0-9]*)
+		warnx "$funcname(): non-numeric value for \$tries: '$tries'"
+		return 1
+		;;
+	esac
+
+	for target in "$@"; do
+		i=$tries
+		if [ -z "$target" ]; then
+			warn EINVAL "$funcname(): \$target null"
+			warnx "$usage"
+			return 1
+		fi
+		while [ $i -gt 0 ]; do
+			i=$(( $i - 1 ))
+			case $ip_ver in
+			[46])
+				;;
+			*)
+				# if it wasn't specified, do a rudimentary
+				# autodetect
+				if isipv4 "$target"; then
+					ip_ver=4
+				elif isipv6 "$target"; then
+					ip_ver=6
+				fi
+				;;
+			esac
+
+			case $ip_ver in
+			6)
+				debug 8 "$funcname(): [ping6 -q -c\"$count\" -w\"$wait\" \"$target\" >/dev/null]"
+				if ! err=$(ping6 -q -c"$count" -w"$wait" "$target" 2>&1); then
+					warnx "$funcname(): failed ping6 for \$target: '$target'"
+					return 1
+				fi
+				;;
+			*)
+				debug 8 "$funcname(): [ping -q -c\"$count\" -w\"$wait\" \"$target\" >/dev/null]"
+				if ! err=$(ping -q -c"$count" -w"$wait" "$target" 2>&1); then
+					warnx "$funcname(): failed ping for \$target: '$target'"
+					return 1
+				fi
+				;;
+			esac
+		done
+	done
+	return 0
+}
+
+#
+# returns  0 if int1 is less than (or equal to) int2
+# returns  1 if int1 is greater than int2
+#
+# example:
+# $ _signed_long_compare 16#7fffffff 16#81000000
+# $? -> 0
+#
+# $ _signed_long_compare 16#81000000 16#7fffffff
+# $? -> 1
+#
+_signed_long_compare()
+{
+	local funcname=_signed_long_compare
+	local usage="$funcname(): usage: $funcname int1 int2"
+	local int1=$1 int2=$2
+	local int1_s=+ int2_s=+
+	if [ $int1 -lt 0 ]; then
+		int1_s=-
+	fi
+	if [ $int2 -lt 0 ]; then
+		int2_s=-
+	fi
+	if [ $int1_s = $int2_s ]; then
+		# same sign implies regular less than test
+		if [ $int1 -le $int2 ]; then
+			return 0
+		fi
+		return 1
+	elif [ $int1_s = + ]; then
+		# if they differ and int1 is +, int2 is - which
+		# means it's -ge 16#80000000 and int1 is not.
+		return 0
+	fi
+	return 1
+}
+
+#
+# reverse byte ordering of 32 bit int. 
+#
+swap32()
+{
+	local funcname=swap32
+	local usage="$funcname(): usage: $funcname int32 [...]"
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	local num=0
+	local arg
+	for arg in "$@"; do
+		if [ -z "$arg" ]; then
+			warn EINVAL "$funcname(): null \$arg"
+			return 1
+		fi
+		if ! num=$(swap32_posix $arg); then
+			warnx "$funcname(): failed swap32_posix() for \$arg: '$arg'"
+			return 1
+		fi
+		echo $num
+	done
+}
+
+swap32_posix()
+{
+	local funcname=swap32_posix
+	local arg
+	for arg in "$@"; do
+		echo $((
+			($arg & 4278190080) >> 24 |
+			($arg & 16711680) >> 8 |
+			($arg & 65280) << 8 | \
+			($arg & 255) << 24 \
+		))
+	done
+}
+
+# takes a compressed-notation IPv6 addr and turns it into expanded
+# colon-hex notation
+expand_ipv6()
+{
+	local funcname=expand_ipv6
+	local usage="$funcname(): usage: $funcname ipv6_addr[/prefixlen][%scope] [...]"
+	local arg addr bytes c first i j last mask num numfirst numlast str prefixlen scope
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	for arg in "$@"; do
+		bytes=0
+		addr=""
+		case $arg in
+		*%*)
+			scope=%${arg#*%}
+			arg=${arg%${scope}}
+			;;
+		*)
+			scope=""
+			;;
+		esac
+		case $arg in
+		*/*)
+			prefixlen=/${arg#*/}
+			arg=${arg%${prefixlen}}
+			;;
+		*)
+			prefixlen=""
+			;;
+		esac
+		if ! isipv6 "$arg"; then
+			warnx "$funcname(): failed isipv6 for \$arg: '$arg'"
+			return 1
+		fi
+		addr="" mask=""
+
+		# normalize to lower case so we don't need 'A-F' in the billions of case statements below
+		case $arg in
+		*[A-F]*)
+			if ! arg=$(echo "$arg" | tr '[:upper:]' '[:lower:]'); then
+				warnx "$funcname(): failed tr(1)"
+				return 1
+			fi
+			;;
+		esac
+
+		# do this outside of the while true loop first and just get it out of the way, so we only fire it once
+		case $arg in
+		*::*)
+			numfirst=0
+			numlast=0
+			first=${arg%%::*}:
+			last=:${arg##*::}
+
+			case $first in
+			:)
+				first=''
+				numfirst=0
+				;;
+			*:*:*:*:*:*:*:)
+				numfirst=7
+				;;
+			*:*:*:*:*:*:)
+				numfirst=6
+				;;
+			*:*:*:*:*:)
+				numfirst=5
+				;;
+			*:*:*:*:)
+				numfirst=4
+				;;
+			*:*:*:)
+				numfirst=3
+				;;
+			*:*:)
+				numfirst=2
+				;;
+			*:)
+				numfirst=1
+				;;
+			esac
+
+			case $last in
+			:)
+				numlast=0
+				last=''
+				;;
+			:*:*:*:*:*:*:*)
+				numlast=7
+				;;
+			:*:*:*:*:*:*)
+				numlast=6
+				;;
+			:*:*:*:*:*)
+				numlast=5
+				;;
+			:*:*:*:*)
+				numlast=4
+				;;
+			:*:*:*)
+				numlast=3
+				;;
+			:*:*)
+				numlast=2
+				;;
+			:*)
+				numlast=1
+				;;
+			esac
+			
+			num=$(( $numfirst + $numlast ))
+			if [ $num -gt 8 ]; then
+				warnx "$funcname(): too many parts: \$first: '$first', \$last: '$last'"
+				return 1
+			fi
+
+			padding=$(( 8 - $num ))
+			case $padding in
+			0)
+				arg=${first}${last#:}
+				;;
+			1)
+				arg=${first}0${last}
+				;;
+			2)
+				arg=${first}0:0${last}
+				;;
+			3)
+				arg=${first}0:0:0${last}
+				;;
+			4)
+				arg=${first}0:0:0:0${last}
+				;;
+			5)
+				arg=${first}0:0:0:0:0${last}
+				;;
+			6)
+				arg=${first}0:0:0:0:0:0${last}
+				;;
+			7)
+				arg=${first}0:0:0:0:0:0:0${last}
+				;;
+			esac
+			;;
+		esac
+		
+		while true; do
+			
+			if [ -z "$arg" ]; then
+				break
+			fi
+
+			case $arg in
+
+			?:*)
+				str=${arg%%:*}
+				addr=${addr}000${str}:
+				mask=:${arg#?:}
+				;;
+
+			????:*) 
+				str=${arg%%:*}
+				addr=${addr}${str}:
+				mask=:${arg#????:}
+				;;
+
+			??:*)
+				str=${arg%%:*}
+				addr=${addr}00${str}:
+				mask=:${arg#??:}
+				;;
+
+			???:*)
+				str=${arg%%:*}
+				addr=${addr}0${str}:
+				mask=:${arg#???:}
+				;;
+
+			????)
+				addr=${addr}${arg}
+				break
+				;;
+
+			???)
+				addr=${addr}0${arg}
+				break
+				;;
+
+			??)
+				addr=${addr}00${arg}
+				break
+				;;
+
+			?)
+				addr=${addr}000${arg}
+				break
+				;;
+
+			esac
+			bytes=$(( $bytes + 2 ))
+			arg=${arg#${str}:}
+			continue
+		done
+		echo ${addr}${prefixlen}${scope}
+	done
+	return 0
+}
+
+cidr_bcast6()
+{
+	local funcname=cidr_bcast6
+	local usage="$funcname(): usage: $funcname ipv6_addr[/prefixlen][%scope] [...]"
+	local allones=4294967295 bcast=0 network=0 netmask=0 prefixlen
+	local arg args
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	args="$@"
+	for arg in $args; do
+		case $arg in
+		*%*)
+			scope=%${arg#*%}
+			arg=${arg%${scope}}
+			;;
+		esac
+		case $arg in
+		*/*)
+			prefixlen=${arg##*/}
+			;;
+		*)
+			arg=$arg/128
+			prefixlen=128
+			;;
+		esac
+		if ! set -- $(cidr_ptonm6_raw "$prefixlen"); then
+			warnx "$funcname(): failed cidr_ptonm6_raw for \$prefixlen: '$prefixlen'"
+			return 1
+		fi
+		ma=$1
+		mb=$2
+		mc=$3
+		md=$4
+		arg=$(cidr_network6 "$arg")
+		if ! set -- $(cidr_network6_raw $(inet6_aton_raw "$arg") "$prefixlen"); then
+			warnx "$funcname(): failed inet6_aton_raw + cidr_network6_raw for \$arg: '$arg'"
+			return 1
+		fi
+		na=$1
+		nb=$2
+		nc=$3
+		nd=$4
+		
+		ba=$(( $ma ^ $allones | $na ))
+		bb=$(( $mb ^ $allones | $nb ))
+		bc=$(( $mc ^ $allones | $nc ))
+		bd=$(( $md ^ $allones | $nd ))
+		
+		echo $(inet6_ntoa_raw $ba $bb $bc $bd)$scope
+	done
+}
+
+#
+# usage: cidr_network6 ipv6_addr[/prefixlen][%scope]
+#
+# if '/prefixlen' is missing /127 is assumed
+#
+# echos back network floor for each input.
+#
+# network = addr & netmask
+#
+# returns:
+# 0 if all found successfully
+# 1 if there is any failure
+#
+cidr_network6()
+{
+	local funcname=cidr_network6
+	local mask=0 network=0 prefixlen=0
+	local arg args addr scope 
+	args="$@"
+	for arg in $args; do
+		case $arg in
+		*%*)
+			scope=%${arg#*%}
+			arg=${arg%${scope}}
+			;;
+		esac
+		case $arg in
+		*/*)
+			addr=${arg%%/*}
+			prefixlen=${arg##*/}
+			if [ $arg != $addr/$prefixlen ]; then
+				# invalid input of some sort
+				warnx "$funcname(): invalid input of some sort"
+				warnx "$funcname(): \$arg: '$arg'"
+				warnx "$funcname(): \$addr: '$addr', \$prefixlen: '$prefixlen'"
+				return 1
+			fi
+			;;
+		*)
+			addr=$arg
+			prefixlen=128
+			;;
+		esac
+		if ! set -- $(inet6_aton_raw "$addr"); then
+			warnx "$funcname(): failed inet_aton6_raw for \$addr: '$addr'"
+			return 1
+		fi
+		a32a=$1
+		a32b=$2
+		a32c=$3
+		a32d=$4
+
+		if ! set -- $(cidr_ptonm6_raw "$prefixlen"); then
+			warnx "$funcname(): failed cidr_ptonm6_posix for \$prefixlen: '$prefixlen'"
+			return 1
+		fi
+		n32a=$1
+		n32b=$2
+		n32c=$3
+		n32d=$4
+
+		arg=$(( $a32a & $n32a )):$(( $a32b & $n32b )):$(( $a32c & $n32c )):$(( $a32d & $n32d ))
+		if ! inet6_ntoa "$arg$scope"; then
+			warnx "$funcname(): failed inet6_ntoa for \$arg\$scope: '$arg$scope'"
+			return 1
+		fi
+	done
+}
+
+
+#
+# usage: cidr_network6_raw raw_form_ipv6_plus_prefixlen
+#
+# eg: 536936448 0 4294967295 4294967295 64
+#
+# does not check for scope
+#
+cidr_network6_raw()
+{
+	local funcname=cidr_network6_raw
+	local mask=0 network=0 prefixlen=0 i=0
+	local arg argsaddr scope 
+	args="$@"
+	# don't want to 'set --' b/c cidr_ptonm_raw needs to
+	for arg in $args; do
+		i=$(( $i + 1 ))
+		case $i in
+		1)
+			aa=$arg
+			continue
+			;;
+		2)
+			ab=$arg
+			continue
+			;;
+		3)
+			ac=$arg
+			continue
+			;;
+		4)
+			ad=$arg
+			continue
+			;;
+		5)
+			p=$arg
+			i=0
+			;;
+		*)
+			warnx "$funcname(): too much looping"
+			return 1
+			;;
+		esac
+
+		if ! set -- $(cidr_ptonm6_raw "$p"); then
+			warnx "$funcname(): failed cidr_ptonm6_posix for \$prefixlen: '$prefixlen'"
+			return 1
+		fi
+		na=$1
+		nb=$2
+		nc=$3
+		nd=$4
+
+		if ! echo $(( $aa & $na )) $(( $ab & $nb )) $(( $ac & $nc )) $(( $ad & $nd )); then
+			warnx "$funcname(): failed math"
+			return 1
+		fi
+	done
+}
+
+#
+# converts inet6_aton_raw-style netmask to integer prefixlen
+#
+cidr_nmtop6_raw()
+{
+	local funcname=cidr_nmtop6_raw
+	local usage="$funcname(): usage: $funcname ipv6_netmask [...]"
+	local i=0 skip=0
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	for arg in "$@"; do
+		if [ $skip -gt 0 ]; then
+			skip=$(( $skip - 1 ))
+			continue
+		fi
+		i=$(( $i + 1 ))
+		case $i in 
+		1)
+			case $arg in
+			4294967295) continue ;;
+			4294967294) echo 31 ;;
+			4294967292) echo 30 ;;
+			4294967288) echo 29 ;;
+			4294967280) echo 28 ;;
+			4294967264) echo 27 ;;
+			4294967232) echo 26 ;;
+			4294967168) echo 25 ;;
+			4294967040) echo 24 ;;
+			4294966784) echo 23 ;;
+			4294966272) echo 22 ;;
+			4294965248) echo 21 ;;
+			4294963200) echo 20 ;;
+			4294959104) echo 19 ;;
+			4294950912) echo 18 ;;
+			4294934528) echo 17 ;;
+			4294901760) echo 16 ;;
+			4294836224) echo 15 ;;
+			4294705152) echo 14 ;;
+			4294443008) echo 13 ;;
+			4293918720) echo 12 ;;
+			4292870144) echo 11 ;;
+			4290772992) echo 10 ;;
+			4286578688) echo 9 ;;
+			4278190080) echo 8 ;;
+			4261412864) echo 7 ;;
+			4227858432) echo 6 ;;
+			4160749568) echo 5 ;;
+			4026531840) echo 4 ;;
+			3758096384) echo 3 ;;
+			3221225472) echo 2 ;;
+			2147483648) echo 1 ;;
+			0) echo 0 ;;
+			*)
+				warnx "$funcname(): invalid \$arg: '$arg'"
+				return 1
+				;;
+			esac
+			# if we fallthrough here, we're done with this set
+			skip=3
+			i=0
+			continue
+			;;
+		2)
+			case $arg in
+			4294967295) continue ;;
+			4294967294) echo 63 ;;
+			4294967292) echo 62 ;;
+			4294967288) echo 61 ;;
+			4294967280) echo 60 ;;
+			4294967264) echo 59 ;;
+			4294967232) echo 58 ;;
+			4294967168) echo 57 ;;
+			4294967040) echo 56 ;;
+			4294966784) echo 55 ;;
+			4294966272) echo 54 ;;
+			4294965248) echo 53 ;;
+			4294963200) echo 52 ;;
+			4294959104) echo 51 ;;
+			4294950912) echo 50 ;;
+			4294934528) echo 49 ;;
+			4294901760) echo 48 ;;
+			4294836224) echo 47 ;;
+			4294705152) echo 46 ;;
+			4294443008) echo 45 ;;
+			4293918720) echo 44 ;;
+			4292870144) echo 43 ;;
+			4290772992) echo 42 ;;
+			4286578688) echo 41 ;;
+			4278190080) echo 40 ;;
+			4261412864) echo 39 ;;
+			4227858432) echo 38 ;;
+			4160749568) echo 37 ;;
+			4026531840) echo 36 ;;
+			3758096384) echo 35 ;;
+			3221225472) echo 34 ;;
+			2147483648) echo 33 ;;
+			0) echo 32 ;;
+			*)
+				warnx "$funcname(): invalid \$arg: '$arg'"
+				return 1
+				;;
+			esac
+			skip=2
+			i=0
+			continue
+			;;
+		3)
+			case $arg in
+			4294967295) continue ;;
+			4294967294) echo 95 ;;
+			4294967292) echo 94 ;;
+			4294967288) echo 93 ;;
+			4294967280) echo 92 ;;
+			4294967264) echo 91 ;;
+			4294967232) echo 90 ;;
+			4294967168) echo 89 ;;
+			4294967040) echo 88 ;;
+			4294966784) echo 87 ;;
+			4294966272) echo 86 ;;
+			4294965248) echo 85 ;;
+			4294963200) echo 84 ;;
+			4294959104) echo 83 ;;
+			4294950912) echo 82 ;;
+			4294934528) echo 81 ;;
+			4294901760) echo 80 ;;
+			4294836224) echo 79 ;;
+			4294705152) echo 78 ;;
+			4294443008) echo 77 ;;
+			4293918720) echo 76 ;;
+			4292870144) echo 75 ;;
+			4290772992) echo 74 ;;
+			4286578688) echo 73 ;;
+			4278190080) echo 72 ;;
+			4261412864) echo 71 ;;
+			4227858432) echo 70 ;;
+			4160749568) echo 69 ;;
+			4026531840) echo 68 ;;
+			3758096384) echo 67 ;;
+			3221225472) echo 66 ;;
+			2147483648) echo 65 ;;
+			0) echo 64 ;;
+			*)
+				warnx "$funcname(): invalid \$arg: '$arg'"
+				return 1
+				;;
+			esac
+			skip=1
+			i=0
+			continue
+			;;
+		4)
+			case $arg in
+			4294967295) echo 128 ;;
+			4294967294) echo 127 ;;
+			4294967292) echo 126 ;;
+			4294967288) echo 125 ;;
+			4294967280) echo 124 ;;
+			4294967264) echo 123 ;;
+			4294967232) echo 122 ;;
+			4294967168) echo 121 ;;
+			4294967040) echo 120 ;;
+			4294966784) echo 119 ;;
+			4294966272) echo 118 ;;
+			4294965248) echo 117 ;;
+			4294963200) echo 116 ;;
+			4294959104) echo 115 ;;
+			4294950912) echo 114 ;;
+			4294934528) echo 113 ;;
+			4294901760) echo 112 ;;
+			4294836224) echo 111 ;;
+			4294705152) echo 110 ;;
+			4294443008) echo 109 ;;
+			4293918720) echo 108 ;;
+			4292870144) echo 107 ;;
+			4290772992) echo 106 ;;
+			4286578688) echo 105 ;;
+			4278190080) echo 104 ;;
+			4261412864) echo 103 ;;
+			4227858432) echo 102 ;;
+			4160749568) echo 101 ;;
+			4026531840) echo 100 ;;
+			3758096384) echo 99 ;;
+			3221225472) echo 98 ;;
+			2147483648) echo 97 ;;
+			0) echo 96 ;;
+			*)
+				warnx "$funcname(): invalid \$arg: '$arg'"
+				return 1
+				;;
+			esac
+			i=0
+			continue
+			;;
+		esac
+	done
+	return 0
+}
+
+#
+# converts inet6_aton-style netmask to integer prefixlen
+#
+# supplying the ipv6_addr and/or scope is optional, they are stripped off
+# and ignored if present.
+#
+cidr_nmtop6()
+{
+	local funcname=cidr_nmtop6
+	local usage="$funcname(): usage: $funcname [ipv6_addr/]ipv6_netmask[%scope] [...]"
+	local scope
+	if [ $# -eq 0 ]; then
+		warn EINVAL
+		warnx "$usage"
+		return 1
+	fi
+	for arg in "$@"; do
+		case $arg in
+		*/*)
+			arg=${arg#*/}
+			;;
+		esac
+		case $arg in
+		*%*)
+			arg=${arg%\%*}
+			;;
+		esac
+		case $arg in
+		4294967295:4294967295:4294967295:4294967295) echo 128 ; continue ;;
+		4294967295:4294967295:4294967295:4294967294) echo 127 ; continue ;;
+		4294967295:4294967295:4294967295:4294967292) echo 126 ; continue ;;
+		4294967295:4294967295:4294967295:4294967288) echo 125 ; continue ;;
+		4294967295:4294967295:4294967295:4294967280) echo 124 ; continue ;;
+		4294967295:4294967295:4294967295:4294967264) echo 123 ; continue ;;
+		4294967295:4294967295:4294967295:4294967232) echo 122 ; continue ;;
+		4294967295:4294967295:4294967295:4294967168) echo 121 ; continue ;;
+		4294967295:4294967295:4294967295:4294967040) echo 120 ; continue ;;
+		4294967295:4294967295:4294967295:4294966784) echo 119 ; continue ;;
+		4294967295:4294967295:4294967295:4294966272) echo 118 ; continue ;;
+		4294967295:4294967295:4294967295:4294965248) echo 117 ; continue ;;
+		4294967295:4294967295:4294967295:4294963200) echo 116 ; continue ;;
+		4294967295:4294967295:4294967295:4294959104) echo 115 ; continue ;;
+		4294967295:4294967295:4294967295:4294950912) echo 114 ; continue ;;
+		4294967295:4294967295:4294967295:4294934528) echo 113 ; continue ;;
+		4294967295:4294967295:4294967295:4294901760) echo 112 ; continue ;;
+		4294967295:4294967295:4294967295:4294836224) echo 111 ; continue ;;
+		4294967295:4294967295:4294967295:4294705152) echo 110 ; continue ;;
+		4294967295:4294967295:4294967295:4294443008) echo 109 ; continue ;;
+		4294967295:4294967295:4294967295:4293918720) echo 108 ; continue ;;
+		4294967295:4294967295:4294967295:4292870144) echo 107 ; continue ;;
+		4294967295:4294967295:4294967295:4290772992) echo 106 ; continue ;;
+		4294967295:4294967295:4294967295:4286578688) echo 105 ; continue ;;
+		4294967295:4294967295:4294967295:4278190080) echo 104 ; continue ;;
+		4294967295:4294967295:4294967295:4261412864) echo 103 ; continue ;;
+		4294967295:4294967295:4294967295:4227858432) echo 102 ; continue ;;
+		4294967295:4294967295:4294967295:4160749568) echo 101 ; continue ;;
+		4294967295:4294967295:4294967295:4026531840) echo 100 ; continue ;;
+		4294967295:4294967295:4294967295:3758096384) echo 99 ; continue ;;
+		4294967295:4294967295:4294967295:3221225472) echo 98 ; continue ;;
+		4294967295:4294967295:4294967295:2147483648) echo 97 ; continue ;;
+		4294967295:4294967295:4294967295:0) echo 96 ; continue ;;
+		4294967295:4294967295:4294967294:0) echo 95 ; continue ;;
+		4294967295:4294967295:4294967292:0) echo 94 ; continue ;;
+		4294967295:4294967295:4294967288:0) echo 93 ; continue ;;
+		4294967295:4294967295:4294967280:0) echo 92 ; continue ;;
+		4294967295:4294967295:4294967264:0) echo 91 ; continue ;;
+		4294967295:4294967295:4294967232:0) echo 90 ; continue ;;
+		4294967295:4294967295:4294967168:0) echo 89 ; continue ;;
+		4294967295:4294967295:4294967040:0) echo 88 ; continue ;;
+		4294967295:4294967295:4294966784:0) echo 87 ; continue ;;
+		4294967295:4294967295:4294966272:0) echo 86 ; continue ;;
+		4294967295:4294967295:4294965248:0) echo 85 ; continue ;;
+		4294967295:4294967295:4294963200:0) echo 84 ; continue ;;
+		4294967295:4294967295:4294959104:0) echo 83 ; continue ;;
+		4294967295:4294967295:4294950912:0) echo 82 ; continue ;;
+		4294967295:4294967295:4294934528:0) echo 81 ; continue ;;
+		4294967295:4294967295:4294901760:0) echo 80 ; continue ;;
+		4294967295:4294967295:4294836224:0) echo 79 ; continue ;;
+		4294967295:4294967295:4294705152:0) echo 78 ; continue ;;
+		4294967295:4294967295:4294443008:0) echo 77 ; continue ;;
+		4294967295:4294967295:4293918720:0) echo 76 ; continue ;;
+		4294967295:4294967295:4292870144:0) echo 75 ; continue ;;
+		4294967295:4294967295:4290772992:0) echo 74 ; continue ;;
+		4294967295:4294967295:4286578688:0) echo 73 ; continue ;;
+		4294967295:4294967295:4278190080:0) echo 72 ; continue ;;
+		4294967295:4294967295:4261412864:0) echo 71 ; continue ;;
+		4294967295:4294967295:4227858432:0) echo 70 ; continue ;;
+		4294967295:4294967295:4160749568:0) echo 69 ; continue ;;
+		4294967295:4294967295:4026531840:0) echo 68 ; continue ;;
+		4294967295:4294967295:3758096384:0) echo 67 ; continue ;;
+		4294967295:4294967295:3221225472:0) echo 66 ; continue ;;
+		4294967295:4294967295:2147483648:0) echo 65 ; continue ;;
+		4294967295:4294967295:0:0) echo 64 ; continue ;;
+		4294967295:4294967294:0:0) echo 63 ; continue ;;
+		4294967295:4294967292:0:0) echo 62 ; continue ;;
+		4294967295:4294967288:0:0) echo 61 ; continue ;;
+		4294967295:4294967280:0:0) echo 60 ; continue ;;
+		4294967295:4294967264:0:0) echo 59 ; continue ;;
+		4294967295:4294967232:0:0) echo 58 ; continue ;;
+		4294967295:4294967168:0:0) echo 57 ; continue ;;
+		4294967295:4294967040:0:0) echo 56 ; continue ;;
+		4294967295:4294966784:0:0) echo 55 ; continue ;;
+		4294967295:4294966272:0:0) echo 54 ; continue ;;
+		4294967295:4294965248:0:0) echo 53 ; continue ;;
+		4294967295:4294963200:0:0) echo 52 ; continue ;;
+		4294967295:4294959104:0:0) echo 51 ; continue ;;
+		4294967295:4294950912:0:0) echo 50 ; continue ;;
+		4294967295:4294934528:0:0) echo 49 ; continue ;;
+		4294967295:4294901760:0:0) echo 48 ; continue ;;
+		4294967295:4294836224:0:0) echo 47 ; continue ;;
+		4294967295:4294705152:0:0) echo 46 ; continue ;;
+		4294967295:4294443008:0:0) echo 45 ; continue ;;
+		4294967295:4293918720:0:0) echo 44 ; continue ;;
+		4294967295:4292870144:0:0) echo 43 ; continue ;;
+		4294967295:4290772992:0:0) echo 42 ; continue ;;
+		4294967295:4286578688:0:0) echo 41 ; continue ;;
+		4294967295:4278190080:0:0) echo 40 ; continue ;;
+		4294967295:4261412864:0:0) echo 39 ; continue ;;
+		4294967295:4227858432:0:0) echo 38 ; continue ;;
+		4294967295:4160749568:0:0) echo 37 ; continue ;;
+		4294967295:4026531840:0:0) echo 36 ; continue ;;
+		4294967295:3758096384:0:0) echo 35 ; continue ;;
+		4294967295:3221225472:0:0) echo 34 ; continue ;;
+		4294967295:2147483648:0:0) echo 33 ; continue ;;
+		4294967295:0:0:0) echo 32 ; continue ;;
+		4294967294:0:0:0) echo 31 ; continue ;;
+		4294967292:0:0:0) echo 30 ; continue ;;
+		4294967288:0:0:0) echo 29 ; continue ;;
+		4294967280:0:0:0) echo 28 ; continue ;;
+		4294967264:0:0:0) echo 27 ; continue ;;
+		4294967232:0:0:0) echo 26 ; continue ;;
+		4294967168:0:0:0) echo 25 ; continue ;;
+		4294967040:0:0:0) echo 24 ; continue ;;
+		4294966784:0:0:0) echo 23 ; continue ;;
+		4294966272:0:0:0) echo 22 ; continue ;;
+		4294965248:0:0:0) echo 21 ; continue ;;
+		4294963200:0:0:0) echo 20 ; continue ;;
+		4294959104:0:0:0) echo 19 ; continue ;;
+		4294950912:0:0:0) echo 18 ; continue ;;
+		4294934528:0:0:0) echo 17 ; continue ;;
+		4294901760:0:0:0) echo 16 ; continue ;;
+		4294836224:0:0:0) echo 15 ; continue ;;
+		4294705152:0:0:0) echo 14 ; continue ;;
+		4294443008:0:0:0) echo 13 ; continue ;;
+		4293918720:0:0:0) echo 12 ; continue ;;
+		4292870144:0:0:0) echo 11 ; continue ;;
+		4290772992:0:0:0) echo 10 ; continue ;;
+		4286578688:0:0:0) echo 9 ; continue ;;
+		4278190080:0:0:0) echo 8 ; continue ;;
+		4261412864:0:0:0) echo 7 ; continue ;;
+		4227858432:0:0:0) echo 6 ; continue ;;
+		4160749568:0:0:0) echo 5 ; continue ;;
+		4026531840:0:0:0) echo 4 ; continue ;;
+		3758096384:0:0:0) echo 3 ; continue ;;
+		3221225472:0:0:0) echo 2 ; continue ;;
+		2147483648:0:0:0) echo 1 ; continue ;;
+		0:0:0:0) echo 0 ; continue ;;
+		*)
+			warnx "$funcname(): invalid \$arg: '$arg'"
+			return 1
+			;;
+		esac
+	done
+	return 0
+}
+
+#
+cidr_ptonm6_raw()
+{
+	local funcname=cidr_ptonm6_raw
+	local arg
+	for arg in "$@"; do
+		case $arg in
+		128) echo 4294967295 4294967295 4294967295 4294967295 ; continue ;;
+		127) echo 4294967295 4294967295 4294967295 4294967294 ; continue ;;
+		126) echo 4294967295 4294967295 4294967295 4294967292 ; continue ;;
+		125) echo 4294967295 4294967295 4294967295 4294967288 ; continue ;;
+		124) echo 4294967295 4294967295 4294967295 4294967280 ; continue ;;
+		123) echo 4294967295 4294967295 4294967295 4294967264 ; continue ;;
+		122) echo 4294967295 4294967295 4294967295 4294967232 ; continue ;;
+		121) echo 4294967295 4294967295 4294967295 4294967168 ; continue ;;
+		120) echo 4294967295 4294967295 4294967295 4294967040 ; continue ;;
+		119) echo 4294967295 4294967295 4294967295 4294966784 ; continue ;;
+		118) echo 4294967295 4294967295 4294967295 4294966272 ; continue ;;
+		117) echo 4294967295 4294967295 4294967295 4294965248 ; continue ;;
+		116) echo 4294967295 4294967295 4294967295 4294963200 ; continue ;;
+		115) echo 4294967295 4294967295 4294967295 4294959104 ; continue ;;
+		114) echo 4294967295 4294967295 4294967295 4294950912 ; continue ;;
+		113) echo 4294967295 4294967295 4294967295 4294934528 ; continue ;;
+		112) echo 4294967295 4294967295 4294967295 4294901760 ; continue ;;
+		111) echo 4294967295 4294967295 4294967295 4294836224 ; continue ;;
+		110) echo 4294967295 4294967295 4294967295 4294705152 ; continue ;;
+		109) echo 4294967295 4294967295 4294967295 4294443008 ; continue ;;
+		108) echo 4294967295 4294967295 4294967295 4293918720 ; continue ;;
+		107) echo 4294967295 4294967295 4294967295 4292870144 ; continue ;;
+		106) echo 4294967295 4294967295 4294967295 4290772992 ; continue ;;
+		105) echo 4294967295 4294967295 4294967295 4286578688 ; continue ;;
+		104) echo 4294967295 4294967295 4294967295 4278190080 ; continue ;;
+		103) echo 4294967295 4294967295 4294967295 4261412864 ; continue ;;
+		102) echo 4294967295 4294967295 4294967295 4227858432 ; continue ;;
+		101) echo 4294967295 4294967295 4294967295 4160749568 ; continue ;;
+		100) echo 4294967295 4294967295 4294967295 4026531840 ; continue ;;
+		99) echo 4294967295 4294967295 4294967295 3758096384 ; continue ;;
+		98) echo 4294967295 4294967295 4294967295 3221225472 ; continue ;;
+		97) echo 4294967295 4294967295 4294967295 2147483648 ; continue ;;
+		96) echo 4294967295 4294967295 4294967295 0 ; continue ;;
+		95) echo 4294967295 4294967295 4294967294 0 ; continue ;;
+		94) echo 4294967295 4294967295 4294967292 0 ; continue ;;
+		93) echo 4294967295 4294967295 4294967288 0 ; continue ;;
+		92) echo 4294967295 4294967295 4294967280 0 ; continue ;;
+		91) echo 4294967295 4294967295 4294967264 0 ; continue ;;
+		90) echo 4294967295 4294967295 4294967232 0 ; continue ;;
+		89) echo 4294967295 4294967295 4294967168 0 ; continue ;;
+		88) echo 4294967295 4294967295 4294967040 0 ; continue ;;
+		87) echo 4294967295 4294967295 4294966784 0 ; continue ;;
+		86) echo 4294967295 4294967295 4294966272 0 ; continue ;;
+		85) echo 4294967295 4294967295 4294965248 0 ; continue ;;
+		84) echo 4294967295 4294967295 4294963200 0 ; continue ;;
+		83) echo 4294967295 4294967295 4294959104 0 ; continue ;;
+		82) echo 4294967295 4294967295 4294950912 0 ; continue ;;
+		81) echo 4294967295 4294967295 4294934528 0 ; continue ;;
+		80) echo 4294967295 4294967295 4294901760 0 ; continue ;;
+		79) echo 4294967295 4294967295 4294836224 0 ; continue ;;
+		78) echo 4294967295 4294967295 4294705152 0 ; continue ;;
+		77) echo 4294967295 4294967295 4294443008 0 ; continue ;;
+		76) echo 4294967295 4294967295 4293918720 0 ; continue ;;
+		75) echo 4294967295 4294967295 4292870144 0 ; continue ;;
+		74) echo 4294967295 4294967295 4290772992 0 ; continue ;;
+		73) echo 4294967295 4294967295 4286578688 0 ; continue ;;
+		72) echo 4294967295 4294967295 4278190080 0 ; continue ;;
+		71) echo 4294967295 4294967295 4261412864 0 ; continue ;;
+		70) echo 4294967295 4294967295 4227858432 0 ; continue ;;
+		69) echo 4294967295 4294967295 4160749568 0 ; continue ;;
+		68) echo 4294967295 4294967295 4026531840 0 ; continue ;;
+		67) echo 4294967295 4294967295 3758096384 0 ; continue ;;
+		66) echo 4294967295 4294967295 3221225472 0 ; continue ;;
+		65) echo 4294967295 4294967295 2147483648 0 ; continue ;;
+		64) echo 4294967295 4294967295 0 0 ; continue ;;
+		63) echo 4294967295 4294967294 0 0 ; continue ;;
+		62) echo 4294967295 4294967292 0 0 ; continue ;;
+		61) echo 4294967295 4294967288 0 0 ; continue ;;
+		60) echo 4294967295 4294967280 0 0 ; continue ;;
+		59) echo 4294967295 4294967264 0 0 ; continue ;;
+		58) echo 4294967295 4294967232 0 0 ; continue ;;
+		57) echo 4294967295 4294967168 0 0 ; continue ;;
+		56) echo 4294967295 4294967040 0 0 ; continue ;;
+		55) echo 4294967295 4294966784 0 0 ; continue ;;
+		54) echo 4294967295 4294966272 0 0 ; continue ;;
+		53) echo 4294967295 4294965248 0 0 ; continue ;;
+		52) echo 4294967295 4294963200 0 0 ; continue ;;
+		51) echo 4294967295 4294959104 0 0 ; continue ;;
+		50) echo 4294967295 4294950912 0 0 ; continue ;;
+		49) echo 4294967295 4294934528 0 0 ; continue ;;
+		48) echo 4294967295 4294901760 0 0 ; continue ;;
+		47) echo 4294967295 4294836224 0 0 ; continue ;;
+		46) echo 4294967295 4294705152 0 0 ; continue ;;
+		45) echo 4294967295 4294443008 0 0 ; continue ;;
+		44) echo 4294967295 4293918720 0 0 ; continue ;;
+		43) echo 4294967295 4292870144 0 0 ; continue ;;
+		42) echo 4294967295 4290772992 0 0 ; continue ;;
+		41) echo 4294967295 4286578688 0 0 ; continue ;;
+		40) echo 4294967295 4278190080 0 0 ; continue ;;
+		39) echo 4294967295 4261412864 0 0 ; continue ;;
+		38) echo 4294967295 4227858432 0 0 ; continue ;;
+		37) echo 4294967295 4160749568 0 0 ; continue ;;
+		36) echo 4294967295 4026531840 0 0 ; continue ;;
+		35) echo 4294967295 3758096384 0 0 ; continue ;;
+		34) echo 4294967295 3221225472 0 0 ; continue ;;
+		33) echo 4294967295 2147483648 0 0 ; continue ;;
+		32) echo 4294967295 0 0 0 ; continue ;;
+		31) echo 4294967294 0 0 0 ; continue ;;
+		30) echo 4294967292 0 0 0 ; continue ;;
+		29) echo 4294967288 0 0 0 ; continue ;;
+		28) echo 4294967280 0 0 0 ; continue ;;
+		27) echo 4294967264 0 0 0 ; continue ;;
+		26) echo 4294967232 0 0 0 ; continue ;;
+		25) echo 4294967168 0 0 0 ; continue ;;
+		24) echo 4294967040 0 0 0 ; continue ;;
+		23) echo 4294966784 0 0 0 ; continue ;;
+		22) echo 4294966272 0 0 0 ; continue ;;
+		21) echo 4294965248 0 0 0 ; continue ;;
+		20) echo 4294963200 0 0 0 ; continue ;;
+		19) echo 4294959104 0 0 0 ; continue ;;
+		18) echo 4294950912 0 0 0 ; continue ;;
+		17) echo 4294934528 0 0 0 ; continue ;;
+		16) echo 4294901760 0 0 0 ; continue ;;
+		15) echo 4294836224 0 0 0 ; continue ;;
+		14) echo 4294705152 0 0 0 ; continue ;;
+		13) echo 4294443008 0 0 0 ; continue ;;
+		12) echo 4293918720 0 0 0 ; continue ;;
+		11) echo 4292870144 0 0 0 ; continue ;;
+		10) echo 4290772992 0 0 0 ; continue ;;
+		9) echo 4286578688 0 0 0 ; continue ;;
+		8) echo 4278190080 0 0 0 ; continue ;;
+		7) echo 4261412864 0 0 0 ; continue ;;
+		6) echo 4227858432 0 0 0 ; continue ;;
+		5) echo 4160749568 0 0 0 ; continue ;;
+		4) echo 4026531840 0 0 0 ; continue ;;
+		3) echo 3758096384 0 0 0 ; continue ;;
+		2) echo 3221225472 0 0 0 ; continue ;;
+		1) echo 2147483648 0 0 0 ; continue ;;
+		0) echo 0 0 0 0 ; continue ;;
+		*)
+			warnx "$funcname(): unknown \$arg: '$arg'"
+			return 1
+			;;
+		esac
+	done
+	return 0
+}
+
+#
+# bitch out and just use a precalc lookup table for this
+# we need to save as much CPU as we can with the ipv6 stuff; netmasks
+# are simple and predictable, so there's no specific value in doing
+# the long/hard math when we're going to just get the numbers below
+# anyway
+#
+cidr_ptonm6()
+{
+	local funcname=cidr_ptonm6
+	local arg
+	for arg in "$@"; do
+		case $arg in
+		*/*)
+			arg=${arg##*/}
+			;;
+		esac
+		case $arg in
+		128) echo 4294967295:4294967295:4294967295:4294967295 ; continue ;;
+		127) echo 4294967295:4294967295:4294967295:4294967294 ; continue ;;
+		126) echo 4294967295:4294967295:4294967295:4294967292 ; continue ;;
+		125) echo 4294967295:4294967295:4294967295:4294967288 ; continue ;;
+		124) echo 4294967295:4294967295:4294967295:4294967280 ; continue ;;
+		123) echo 4294967295:4294967295:4294967295:4294967264 ; continue ;;
+		122) echo 4294967295:4294967295:4294967295:4294967232 ; continue ;;
+		121) echo 4294967295:4294967295:4294967295:4294967168 ; continue ;;
+		120) echo 4294967295:4294967295:4294967295:4294967040 ; continue ;;
+		119) echo 4294967295:4294967295:4294967295:4294966784 ; continue ;;
+		118) echo 4294967295:4294967295:4294967295:4294966272 ; continue ;;
+		117) echo 4294967295:4294967295:4294967295:4294965248 ; continue ;;
+		116) echo 4294967295:4294967295:4294967295:4294963200 ; continue ;;
+		115) echo 4294967295:4294967295:4294967295:4294959104 ; continue ;;
+		114) echo 4294967295:4294967295:4294967295:4294950912 ; continue ;;
+		113) echo 4294967295:4294967295:4294967295:4294934528 ; continue ;;
+		112) echo 4294967295:4294967295:4294967295:4294901760 ; continue ;;
+		111) echo 4294967295:4294967295:4294967295:4294836224 ; continue ;;
+		110) echo 4294967295:4294967295:4294967295:4294705152 ; continue ;;
+		109) echo 4294967295:4294967295:4294967295:4294443008 ; continue ;;
+		108) echo 4294967295:4294967295:4294967295:4293918720 ; continue ;;
+		107) echo 4294967295:4294967295:4294967295:4292870144 ; continue ;;
+		106) echo 4294967295:4294967295:4294967295:4290772992 ; continue ;;
+		105) echo 4294967295:4294967295:4294967295:4286578688 ; continue ;;
+		104) echo 4294967295:4294967295:4294967295:4278190080 ; continue ;;
+		103) echo 4294967295:4294967295:4294967295:4261412864 ; continue ;;
+		102) echo 4294967295:4294967295:4294967295:4227858432 ; continue ;;
+		101) echo 4294967295:4294967295:4294967295:4160749568 ; continue ;;
+		100) echo 4294967295:4294967295:4294967295:4026531840 ; continue ;;
+		99) echo 4294967295:4294967295:4294967295:3758096384 ; continue ;;
+		98) echo 4294967295:4294967295:4294967295:3221225472 ; continue ;;
+		97) echo 4294967295:4294967295:4294967295:2147483648 ; continue ;;
+		96) echo 4294967295:4294967295:4294967295:0 ; continue ;;
+		95) echo 4294967295:4294967295:4294967294:0 ; continue ;;
+		94) echo 4294967295:4294967295:4294967292:0 ; continue ;;
+		93) echo 4294967295:4294967295:4294967288:0 ; continue ;;
+		92) echo 4294967295:4294967295:4294967280:0 ; continue ;;
+		91) echo 4294967295:4294967295:4294967264:0 ; continue ;;
+		90) echo 4294967295:4294967295:4294967232:0 ; continue ;;
+		89) echo 4294967295:4294967295:4294967168:0 ; continue ;;
+		88) echo 4294967295:4294967295:4294967040:0 ; continue ;;
+		87) echo 4294967295:4294967295:4294966784:0 ; continue ;;
+		86) echo 4294967295:4294967295:4294966272:0 ; continue ;;
+		85) echo 4294967295:4294967295:4294965248:0 ; continue ;;
+		84) echo 4294967295:4294967295:4294963200:0 ; continue ;;
+		83) echo 4294967295:4294967295:4294959104:0 ; continue ;;
+		82) echo 4294967295:4294967295:4294950912:0 ; continue ;;
+		81) echo 4294967295:4294967295:4294934528:0 ; continue ;;
+		80) echo 4294967295:4294967295:4294901760:0 ; continue ;;
+		79) echo 4294967295:4294967295:4294836224:0 ; continue ;;
+		78) echo 4294967295:4294967295:4294705152:0 ; continue ;;
+		77) echo 4294967295:4294967295:4294443008:0 ; continue ;;
+		76) echo 4294967295:4294967295:4293918720:0 ; continue ;;
+		75) echo 4294967295:4294967295:4292870144:0 ; continue ;;
+		74) echo 4294967295:4294967295:4290772992:0 ; continue ;;
+		73) echo 4294967295:4294967295:4286578688:0 ; continue ;;
+		72) echo 4294967295:4294967295:4278190080:0 ; continue ;;
+		71) echo 4294967295:4294967295:4261412864:0 ; continue ;;
+		70) echo 4294967295:4294967295:4227858432:0 ; continue ;;
+		69) echo 4294967295:4294967295:4160749568:0 ; continue ;;
+		68) echo 4294967295:4294967295:4026531840:0 ; continue ;;
+		67) echo 4294967295:4294967295:3758096384:0 ; continue ;;
+		66) echo 4294967295:4294967295:3221225472:0 ; continue ;;
+		65) echo 4294967295:4294967295:2147483648:0 ; continue ;;
+		64) echo 4294967295:4294967295:0:0 ; continue ;;
+		63) echo 4294967295:4294967294:0:0 ; continue ;;
+		62) echo 4294967295:4294967292:0:0 ; continue ;;
+		61) echo 4294967295:4294967288:0:0 ; continue ;;
+		60) echo 4294967295:4294967280:0:0 ; continue ;;
+		59) echo 4294967295:4294967264:0:0 ; continue ;;
+		58) echo 4294967295:4294967232:0:0 ; continue ;;
+		57) echo 4294967295:4294967168:0:0 ; continue ;;
+		56) echo 4294967295:4294967040:0:0 ; continue ;;
+		55) echo 4294967295:4294966784:0:0 ; continue ;;
+		54) echo 4294967295:4294966272:0:0 ; continue ;;
+		53) echo 4294967295:4294965248:0:0 ; continue ;;
+		52) echo 4294967295:4294963200:0:0 ; continue ;;
+		51) echo 4294967295:4294959104:0:0 ; continue ;;
+		50) echo 4294967295:4294950912:0:0 ; continue ;;
+		49) echo 4294967295:4294934528:0:0 ; continue ;;
+		48) echo 4294967295:4294901760:0:0 ; continue ;;
+		47) echo 4294967295:4294836224:0:0 ; continue ;;
+		46) echo 4294967295:4294705152:0:0 ; continue ;;
+		45) echo 4294967295:4294443008:0:0 ; continue ;;
+		44) echo 4294967295:4293918720:0:0 ; continue ;;
+		43) echo 4294967295:4292870144:0:0 ; continue ;;
+		42) echo 4294967295:4290772992:0:0 ; continue ;;
+		41) echo 4294967295:4286578688:0:0 ; continue ;;
+		40) echo 4294967295:4278190080:0:0 ; continue ;;
+		39) echo 4294967295:4261412864:0:0 ; continue ;;
+		38) echo 4294967295:4227858432:0:0 ; continue ;;
+		37) echo 4294967295:4160749568:0:0 ; continue ;;
+		36) echo 4294967295:4026531840:0:0 ; continue ;;
+		35) echo 4294967295:3758096384:0:0 ; continue ;;
+		34) echo 4294967295:3221225472:0:0 ; continue ;;
+		33) echo 4294967295:2147483648:0:0 ; continue ;;
+		32) echo 4294967295:0:0:0 ; continue ;;
+		31) echo 4294967294:0:0:0 ; continue ;;
+		30) echo 4294967292:0:0:0 ; continue ;;
+		29) echo 4294967288:0:0:0 ; continue ;;
+		28) echo 4294967280:0:0:0 ; continue ;;
+		27) echo 4294967264:0:0:0 ; continue ;;
+		26) echo 4294967232:0:0:0 ; continue ;;
+		25) echo 4294967168:0:0:0 ; continue ;;
+		24) echo 4294967040:0:0:0 ; continue ;;
+		23) echo 4294966784:0:0:0 ; continue ;;
+		22) echo 4294966272:0:0:0 ; continue ;;
+		21) echo 4294965248:0:0:0 ; continue ;;
+		20) echo 4294963200:0:0:0 ; continue ;;
+		19) echo 4294959104:0:0:0 ; continue ;;
+		18) echo 4294950912:0:0:0 ; continue ;;
+		17) echo 4294934528:0:0:0 ; continue ;;
+		16) echo 4294901760:0:0:0 ; continue ;;
+		15) echo 4294836224:0:0:0 ; continue ;;
+		14) echo 4294705152:0:0:0 ; continue ;;
+		13) echo 4294443008:0:0:0 ; continue ;;
+		12) echo 4293918720:0:0:0 ; continue ;;
+		11) echo 4292870144:0:0:0 ; continue ;;
+		10) echo 4290772992:0:0:0 ; continue ;;
+		9) echo 4286578688:0:0:0 ; continue ;;
+		8) echo 4278190080:0:0:0 ; continue ;;
+		7) echo 4261412864:0:0:0 ; continue ;;
+		6) echo 4227858432:0:0:0 ; continue ;;
+		5) echo 4160749568:0:0:0 ; continue ;;
+		4) echo 4026531840:0:0:0 ; continue ;;
+		3) echo 3758096384:0:0:0 ; continue ;;
+		2) echo 3221225472:0:0:0 ; continue ;;
+		1) echo 2147483648:0:0:0 ; continue ;;
+		0) echo 0:0:0:0 ; continue ;;
+		esac
+		warnx "$funcname(): unknown \$arg: '$arg'"
+		return 1
+	done
+	return 0
+}
+
+#
+# converts colon-notation addresses into their integer equivalents
+# integers are echoed back as colon-separated 32b ints.
+# if an interface scope is given, it is echoed back as a 5th item.
+#
+# for example:
+#
+# $ inet6_aton 2001:0db8:85a3:0000:0000:8a2e:0370:7334%interface_scope
+# 53l939960:2242052096:35374:57701172%interface_scope
+#
+inet6_aton()
+{
+	local funcname=inet6_aton
+	local arg bit=high num part scope colons i a32a a32b a32c a32d
+	for arg in "$@"; do
+		case $arg in
+		*%*)
+			scope=%${arg#*%}
+			arg=${arg%${scope}}
+			;;
+		esac
+		case $arg in
+		*/*)
+			arg=${arg%%/*}
+			;;
+		esac
+		case $arg in
+		"")
+			continue
+			;;
+		*[!0-9a-fA-F:/]*)
+			warn EINVAL "$funcname(): bad character in \$arg: '$arg'"
+			return 1
+			;;
+		esac
+		case $arg in
+		*::*)
+			if ! arg=$(expand_ipv6 "$arg"); then
+				warnx "$funcname(): failed expand_ipv6 for \$arg: '$arg'"
+				return 1
+			fi
+			;;
+		esac
+		colons=0 a32a=0 a32b=0 a32c=0 a32d=0
+		while true; do
+			part=${arg%%:*}
+			arg=${arg#${part}:}
+			colons=$(( $colons + 1 ))
+			if ! num=$(( 0x${part} )); then
+				warnx "$funcname(): failed converting to decimal, \$part: '$part'"
+				return 1
+			fi
+			if [ $colons -gt 6 ]; then
+				i=4
+			elif [ $colons -gt 4 ]; then
+				i=3
+			elif [ $colons -gt 2 ]; then
+				i=2
+			else
+				i=1
+			fi
+			case $bit in
+			high)
+				num=$(( $num << 16 ))
+				bit=low
+				;;
+			low)
+				bit=high
+				;;
+			esac
+			case $i in
+			1)
+				a32a=$(( $a32a | $num ))
+				;;
+			2)
+				a32b=$(( $a32b | $num ))
+				;;
+			3)
+				a32c=$(( $a32c | $num ))
+				;;
+			4)
+				a32d=$(( $a32d | $num ))
+				;;
+			esac
+			if [ $colons -ge 8 ]; then
+				break
+			fi
+		done
+		echo ${a32a}:${a32b}:${a32c}:${a32d}${scope}
+	done
+}
+
+#
+# converts colon-notation addresses into their integer equivalents
+# integers are echoed back as space-separated 32b ints.
+#
+# for example:
+#
+# $ inet6_aton_raw 2001:0db8:85a3:0000:0000:8a2e:0370:7334[/prefixlen][%scope]
+# 53l939960 2242052096 35374 57701172
+#
+# CAVEATS:
+# - input must be canonified first (eg, no compact IPv6 addresses)
+# - scope and/or prefixlen are ignored and discarded if given
+#
+inet6_aton_raw()
+{
+	local funcname=inet6_aton_raw
+	local arg bit=high num part colons i a32a a32b a32c a32d
+	for arg in "$@"; do
+		case $arg in
+		"")
+			continue
+			;;
+		esac
+		case $arg in
+		*/*)
+			arg=${arg%%/*}
+			;;
+		esac
+		case $arg in
+		*[!0-9a-fA-F:]*)
+			warn EINVAL "$funcname(): bad character in \$arg: '$arg'"
+			return 1
+			;;
+		esac
+		colons=0 a32a=0 a32b=0 a32c=0 a32d=0
+		while true; do
+			part=${arg%%:*}
+			arg=${arg#${part}:}
+			colons=$(( $colons + 1 ))
+			if ! num=$(( 0x${part} )); then
+				warnx "$funcname(): failed converting to decimal, \$part: '$part'"
+				return 1
+			fi
+			if [ $colons -gt 6 ]; then
+				i=4
+			elif [ $colons -gt 4 ]; then
+				i=3
+			elif [ $colons -gt 2 ]; then
+				i=2
+			else
+				i=1
+			fi
+			case $bit in
+			high)
+				num=$(( $num << 16 ))
+				bit=low
+				;;
+			low)
+				bit=high
+				;;
+			esac
+			case $i in
+			1)
+				a32a=$(( $a32a | $num ))
+				;;
+			2)
+				a32b=$(( $a32b | $num ))
+				;;
+			3)
+				a32c=$(( $a32c | $num ))
+				;;
+			4)
+				a32d=$(( $a32d | $num ))
+				;;
+			esac
+			if [ $colons -ge 8 ]; then
+				break
+			fi
+		done
+		echo $a32a $a32b $a32c $a32d
+	done
+}
+
+#
+# this is meant to consume the output format generated by inet6_aton_raw, described above.
+#
+inet6_ntoa_raw()
+{
+	local funcname=inet6_ntoa_raw
+	local arg args i a32ah a32al a32bh a32bl a32ch a32cl a32dh a32dl scope
+	i=0
+	args="$@"
+	for arg in $args; do
+		case $arg in
+		"")
+			warnx "$funcname(): null arg encountered"
+			return 1
+			;;
+		*/*)
+			arg=${arg%%/*}
+			;;
+		esac
+		case $arg in
+		*%*)
+			arg=${arg%%\%*}
+			;;
+		esac
+		case $arg in
+		*[!0-9]*)
+			warnx "$funcname(): invalid character in \$arg: '$arg'"
+			return 1
+			;;
+		esac
+		i=$(( $i + 1 ))
+		case $i in
+		1)
+			a32al=$(( $arg & 0x0000ffff ))
+			a32ah=$(( ($arg & 0xffff0000) >> 16 ))
+			continue
+			;;
+		2)
+			a32bl=$(( $arg & 0x0000ffff ))
+			a32bh=$(( ($arg & 0xffff0000) >> 16 ))
+			continue
+			;;
+		3)
+			a32cl=$(( $arg & 0x0000ffff ))
+			a32ch=$(( ($arg & 0xffff0000) >> 16 ))
+			continue
+			;;
+		4)
+			a32dl=$(( $arg & 0x0000ffff ))
+			a32dh=$(( ($arg & 0xffff0000) >> 16 ))
+			i=0
+			# fallthrough
+			;;
+		*)
+			warnx "$funcname(): too much looping"
+			return 1
+			;;
+		esac
+		if ! set -- $(echo "$a32ah" "$a32al" "$a32bh" "$a32bl" "$a32ch" "$a32cl" "$a32dh" "$a32dl" | tobasen 16); then
+			warnx "$funcname(): failed tobasen"
+			return 1
+		fi
+		echo $1:$2:$3:$4:$5:$6:$7:${8}$scope
+	done
+}
+
+#
+# this is meant to consume the output format generated by inet6_aton, described above.
+#
+inet6_ntoa()
+{
+	local funcname=inet6_ntoa
+	local arg args i a32a a32ah a32al a32b a32bh a32bl a32c a32ch a32cl a32d a32dh a32dl scope
+	args="$@"
+	for arg in $args; do
+		case $arg in
+		"")
+			continue
+			;;
+		*/*)
+			arg=${arg%%*/}
+			;;
+		esac
+		case $arg in
+		*%*)
+			scope=%${arg#*%}
+			arg=${arg%${scope}}
+			;;
+		esac
+		a32a=${arg%%:*}
+		arg=${arg#${a32a}:}
+		a32b=${arg%%:*}
+		arg=${arg#${a32b}:}
+		a32c=${arg%%:*}
+		arg=${arg#${a32c}:}
+		a32d=${arg%%:*}
+		arg=${arg#${a32d}:}
+		a32al=$(( $a32a & 0x0000ffff ))
+		a32ah=$(( ($a32a & 0xffff0000) >> 16 ))
+		a32bl=$(( $a32b & 0x0000ffff ))
+		a32bh=$(( ($a32b & 0xffff0000) >> 16 ))
+		a32cl=$(( $a32c & 0x0000ffff ))
+		a32ch=$(( ($a32c & 0xffff0000) >> 16 ))
+		a32dl=$(( $a32d & 0x0000ffff ))
+		a32dh=$(( ($a32d & 0xffff0000) >> 16 ))
+		if ! set -- $(echo "$a32ah" "$a32al" "$a32bh" "$a32bl" "$a32ch" "$a32cl" "$a32dh" "$a32dl" | tobasen 16); then
+			warnx "$funcname(): failed tobasen"
+			return 1
+		fi
+		echo $1:$2:$3:$4:$5:$6:$7:${8}${scope}
+	done
+}
+
+__script_lib_have_net_inet=1

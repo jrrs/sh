@@ -1,0 +1,56 @@
+#!/bin/sh
+
+# $Id$
+
+# generic stub for starting a script
+
+. $SCRIPT_LIB_ROOT/common
+
+noop=0
+verbose=0
+if ! tmpdir=$(mktemp -dt "$progname.XXXXXXXXXX"); then
+	warnx "failed mktemp(1) at startup"
+	exit 1
+fi
+
+trap 'cleanup "$tmpdir"' EXIT
+
+usage()
+{
+	printf -- 'usage: %s [-nkv] [-V verbosity]\n' "$progname"
+	printf -- '-k -- keep tmpfiles\n'
+	printf -- '-n -- NOOP mood\n'
+	printf -- '-V -- specify verbosity\n'
+	printf -- '-v -- increase verbosity\n'
+	exit 1
+}
+
+OPTIND=1
+while getopts knV:v ch; do
+	case $ch in
+	k)
+		trap '' EXIT
+		;;
+	n)
+		noop=1
+		;;
+	V)
+		verbose=$OPTARG
+		;;
+	v)
+		verbose=$(( verbose + 1 ))
+		;;
+	*)
+		warn EINVAL "-$ch"
+		usage
+		;;
+	esac
+done
+if [ $OPTIND -gt 1 ]; then
+	shift $(( $OPTIND - 1 ))
+fi
+if ! isdigit "$verbose"; then
+	warnx "ERROR: non-numeric \$verbose: '$verbose'"
+	exit 1
+fi
+debug 1 "\$tmpdir: '$tmpdir'"

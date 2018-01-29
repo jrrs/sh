@@ -1,0 +1,16 @@
+case $SCRIPT_LIB_ROOT in
+"")
+	_libroot=/usr/share/scriptlib
+	;;
+*)
+	_libroot=$SCRIPT_LIB_ROOT
+	;;
+esac
+
+. $_libroot/file/check
+. $_libroot/file/cleanup
+. $_libroot/string/err
+. $_libroot/string/isctype
+. $_libroot/string/stripcom
+
+progname=$(progname)
