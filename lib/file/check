@@ -1,0 +1,560 @@
+case $__script_lib_have_file_check in
+1)
+	return 0
+	;;
+esac
+
+case $SCRIPT_LIB_ROOT in
+"")
+	_libroot=/usr/share/scriptlib
+	;;
+*)
+	_libroot=$SCRIPT_LIB_ROOT
+	;;
+esac
+
+. ${_libroot}/string/err
+
+#
+# documented in the file_check(3) manpage.
+#
+# NOTE
+#
+# when the 'create' functionality is invoked, the file or directory will
+# be created permissions corresponding to the name of the function invoked.
+# that is, if one invokes 'check_file_write -c', the file will be created
+# with write (as well as read, as check_file_read is subordinate to
+# check_file_write) permissions.
+#
+# NOTE
+#
+# the permissions modified
+# will be whatever chmod(1) uses by default (which is usually subject to
+# umask) and initial file/directory creation will be subject to the umask
+# setting in effect when the function is called.
+#
+# a side effect of this is that bits inhibited to
+# the owner by the umask will cause errors in functions meant to act on the
+# bits that are masked out.
+#
+# for example, if the write bit for the user is enabled in the umask, and
+# check_file_write is called with -c, and it creates a file, when chmod(1)
+# fires it will effectively NOOP because chmod is called with the identity
+# scope of the permissions unspecified. (eg no 'u', 'g', 'o' or 'a').
+#
+# NOTE
+#
+# note that these functions are only concerned with whether the given
+# arguments match the so-named properties, and not whether they have no additional
+# properties.  for example, check_dir_read does not enforce that a dir is *not*
+# writable, only that it *is* readable.
+#
+# BUGS
+#
+# all that shit is what manpages are for
+#
+
+check_dir()
+{
+	local funcname=check_dir
+	if ! check_dir_write "$@"; then
+		warnx "$funcname(): failed check_dir_write()"
+		debug 1 "$funcname(): \$@: '$@'"
+		return 1
+	fi
+	return 0
+}
+
+check_dir_exist()
+{
+	local funcname=check_dir_exist
+	local usage="$funcname(): usage: $funcname [-cq] entity [...]"
+	local ch create entity quiet
+
+	OPTIND=1
+	while getopts cq ch; do
+		case $ch in
+		c)
+			create=-c
+			;;
+		q)
+			quiet=-q
+			;;
+		esac
+	done
+	shift $(( $OPTIND - 1 ))
+
+	if [ $# -lt 1 ]; then
+		warnx "$funcname(): no dir given"
+		warnx "$usage"
+		return 1
+	fi
+	for entity in "$@"; do
+		if [ -z "$entity" ]; then
+			warnx "$funcname(): null \$entity"
+			return 1
+		fi
+		if [ -e "$entity" ] && [ ! -d "$entity" ]; then
+			case $quiet in
+			"")
+				warn ENOTDIR "$funcname(): '$entity'"
+				;;
+			esac
+			return 1
+		fi
+		case $create in
+		"")
+			;;
+		*)
+			if [ ! -e "$entity" ]; then
+				if ! mkdir -p -- "$entity"; then
+					warnx "$funcname(): failed mkdir(1) for \$entity: '$entity'"
+					return 2
+				fi
+			fi
+			;;
+		esac
+		if [ ! -e "$entity" ]; then
+			case $quiet in
+			"")
+				warn ENOENT "$funcname(): '$entity'"
+				;;
+			esac
+			return 1
+		fi
+	done
+	return 0
+}
+
+check_dir_read()
+{
+	local funcname=check_dir_read
+	local usage="$funcname(): usage: $funcname [-cq] entity [...]"
+	local ch create entity err quiet
+	local newly_created=0
+
+	OPTIND=1
+	while getopts cq ch; do
+		case $ch in
+		c)
+			create=-c
+			;;
+		q)
+			quiet=-q
+			;;
+		esac
+	done
+	shift $(( $OPTIND - 1 ))
+
+	if [ $# -lt 1 ]; then
+		warnx "$funcname(): no dir given"
+		warnx "$usage"
+		return 1
+	fi
+	for entity in "$@"; do
+		case $create in
+		-c)
+			if ! check_dir_exist -q -- "$entity"; then
+				newly_created=1
+			fi
+			;;
+		esac
+		if check_dir_exist $create $quiet "$entity"
+		then :; else
+			err=$?
+			case $err in
+			2)
+				warnx "$funcname(): create operation failed in check_dir_exist()"
+				;;
+			1)
+				case $quiet in
+				"")
+					warnx "$funcname(): failed check_dir_exist() '$entity'"
+					;;
+				esac
+				;;
+			esac
+			return $err
+		fi
+		case $newly_created in
+		1)
+			if ! chmod +r -- "$entity"; then
+				warnx "$funcname(): failed chmod(1) for \$entity: '$entity'"
+				return 2
+			fi
+			;;
+		esac
+		if [ ! -r "$entity" ]; then
+			case $quiet in
+			"")
+				warn EACCES "$funcname(): '$entity'"
+				;;
+			esac
+			return 1
+		fi
+	done
+	return 0
+}
+
+check_dir_write()
+{
+	local funcname=check_dir_write
+	local usage="$funcname(): usage: $funcname [-cq] entity [...]"
+	local ch create entity quiet
+	local newly_created=0
+
+	OPTIND=1
+	while getopts cq ch; do
+		case $ch in
+		c)
+			create=-c
+			;;
+		q)
+			quiet=-q
+			;;
+		esac
+	done
+	shift $(( $OPTIND - 1 ))
+
+	if [ $# -lt 1 ]; then
+		warnx "$funcname(): no dir given"
+		warnx "$usage"
+		return 1
+	fi
+	for entity in "$@"; do
+		case $create in
+		-c)
+			if ! check_dir_exist -q -- "$entity"; then
+				newly_created=1
+			fi
+			;;
+		esac
+		if check_dir_read $create $quiet "$entity"
+		then :; else
+			err=$?
+			case $err in
+			2)
+				warnx "$funcname(): create operation failed in check_dir_read()"
+				;;
+			1)
+				case $quiet in
+				"")
+					warnx "$funcname(): failed check_dir_read() '$entity'"
+					;;
+				esac
+				;;
+			esac
+			return $err
+		fi
+		case $newly_created in
+		1)
+			if ! chmod +w -- "$entity"; then
+				warnx "$funcname(): failed chmod(1) for \$entity: '$entity'"
+				return 2
+			fi
+			;;
+		esac
+		if [ ! -w "$entity" ]; then
+			case $quiet in
+			"")
+				warn EACCES "$funcname(): '$entity'"
+				;;
+			esac
+			return 1
+		fi
+	done
+	return 0
+}
+
+check_file()
+{
+	local funcname=check_file
+	if ! check_file_write "$@"; then
+		warnx "$funcname(): failed check_file_write()"
+		debug 1 "$funcname(): \$@: '$@'"
+		return 1
+	fi
+	return 0
+}
+
+check_file_exist()
+{
+	local funcname=check_file_exist
+	local usage="$funcname(): usage: $funcname [-cq] entity [...]"
+	local ch create entity quiet
+
+	OPTIND=1
+	while getopts cq ch; do
+		case $ch in
+		c)
+			create=-c
+			;;
+		q)
+			quiet=-q
+			;;
+		esac
+	done
+	shift $(( $OPTIND - 1 ))
+
+	if [ $# -lt 1 ]; then
+		warnx "$funcname(): no file given"
+		warnx "$usage"
+		return 1
+	fi
+	for entity in "$@"; do
+		if [ -z "$entity" ]; then
+			warnx "$funcname(): null \$entity"
+			return 1
+		fi
+		if [ -e "$entity" ] && [ ! -f "$entity" ]; then
+			case $quiet in
+			"")
+				warnx "$funcname(): '$entity': Not a regular file"
+				;;
+			esac
+			return 1
+		fi
+		case $create in
+		"")
+			;;
+		*)
+			if [ ! -e "$entity" ]; then
+				if ! touch -- "$entity"; then
+					warnx "$funcname(): failed touch(1) for \$entity: '$entity'"
+					return 2
+				fi
+			fi
+			;;
+		esac
+		if [ ! -e "$entity" ]; then
+			case $quiet in
+			"")
+				warn ENOENT "$funcname(): '$entity'"
+				;;
+			esac
+			return 1
+		fi
+
+	done
+	return 0
+}
+
+check_file_read()
+{
+	local funcname=check_file_read
+	local usage="$funcname(): usage: $funcname [-cq] entity [...]"
+	local ch create entity quiet
+	local newly_created=0
+
+	OPTIND=1
+	while getopts cq ch; do
+		case $ch in
+		c)
+			create=-c
+			;;
+		q)
+			quiet=-q
+			;;
+		esac
+	done
+	shift $(( $OPTIND - 1 ))
+
+	if [ $# -lt 1 ]; then
+		warnx "$funcname(): no file given"
+		warnx "$usage"
+		return 1
+	fi
+	for entity in "$@"; do
+		case $create in
+		-c)
+			if ! check_file_exist -q -- "$entity"; then
+				newly_created=1
+			fi
+			;;
+		esac
+		if check_file_exist $create $quiet "$entity"
+		then :; else
+			err=$?
+			case $err in
+			2)
+				warnx "$funcname(): create operation failed in check_file_exist()"
+				;;
+			1)
+				case $quiet in
+				"")
+					warnx "$funcname(): failed check_file_exist() '$entity'"
+					;;
+				esac
+				;;
+			esac
+			return $err
+		fi
+		case $newly_created in
+		1)
+			if ! chmod +r -- "$entity"; then
+				warnx "$funcname(): failed chmod(1) for \$entity: '$entity'"
+				return 1
+			fi
+			;;
+		esac
+		if [ ! -r "$entity" ]; then
+			case $quiet in
+			"")
+				warn EACCES "$funcname(): '$entity'"
+				;;
+			esac
+			return 1
+		fi
+	done
+	return 0
+}
+
+check_file_exec()
+{
+	local funcname=check_file_exec
+	local usage="$funcname(): usage: $funcname [-cq] entity [...]"
+	local ch create entity quiet
+	local newly_created=0
+
+	OPTIND=1
+	while getopts cq ch; do
+		case $ch in
+		c)
+			create=-c
+			;;
+		q)
+			quiet=-q
+			;;
+		esac
+	done
+	shift $(( $OPTIND - 1 ))
+
+	if [ $# -lt 1 ]; then
+		warnx "$funcname(): no file given"
+		warnx "$usage"
+		return 1
+	fi
+	for entity in "$@"; do
+		case $create in
+		-c)
+			if ! check_file_exist -q -- "$entity"; then
+				newly_created=1
+			fi
+			;;
+		esac
+		if check_file_read $create $quiet "$entity"
+		then :; else
+			err=$?
+			case $err in
+			2)
+				warnx "$funcname(): create operation failed in check_file_read()"
+				;;
+			1)
+				case $quiet in
+				"")
+					warnx "$funcname(): failed check_file_read() '$entity'"
+					;;
+				esac
+				;;
+			esac
+			return $err
+		fi
+		case $newly_created in
+		1)
+			if ! chmod +x -- "$entity"; then
+				warnx "$funcname(): failed chmod(1) for \$entity: '$entity'"
+				return 2
+			fi
+			;;
+		esac
+		if [ ! -x "$entity" ]; then
+			case $quiet in
+			"")
+				warn EACCES "$funcname(): '$entity'"
+				;;
+			esac
+			return 1
+		fi
+	done
+	return 0
+}
+
+check_file_write()
+{
+	local funcname=check_file_write
+	local usage="$funcname(): usage: $funcname [-cq] entity [...]"
+	local ch create entity quiet
+	local newly_created=0
+
+	OPTIND=1
+	while getopts cq ch; do
+		case $ch in
+		c)
+			create=-c
+			;;
+		q)
+			quiet=-q
+			;;
+		esac
+	done
+	shift $(( $OPTIND - 1 ))
+
+	if [ $# -lt 1 ]; then
+		warnx "$funcname(): no file given"
+		warnx "$usage"
+		return 1
+	fi
+	for entity in "$@"; do
+		case $create in
+		-c)
+			if ! check_file_exist -q -- "$entity"; then
+				newly_created=1
+			fi
+			;;
+		esac
+		if check_file_exist $create $quiet "$entity"
+		then :; else
+			err=$?
+			case $err in
+			2)
+				warnx "$funcname(): create operation failed in check_file_exist()"
+				;;
+			1)
+				case $quiet in
+				"")
+					warnx "$funcname(): failed check_file_exist() '$entity'"
+					;;
+				esac
+				;;
+			esac
+			return $err
+		fi
+		if ! check_file_read $create $quiet "$entity"; then
+			case $quiet in
+			"")
+				warnx "$funcname(): failed check_file_read() '$entity'"
+				;;
+			esac
+			return 1
+		fi
+		case $newly_created in
+		1)
+			if ! chmod +w -- "$entity"; then
+				warnx "$funcname(): failed chmod(1) for \$entity: '$entity'"
+				return 1
+			fi
+			;;
+		esac
+		if [ ! -w "$entity" ]; then
+			case $quiet in
+			"")
+				warn EACCES "$funcname(): $entity"
+				;;
+			esac
+			return 1
+		fi
+	done
+	return 0
+}
+
+__script_lib_have_file_check=1

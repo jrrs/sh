@@ -1,0 +1,277 @@
+case $__script_lib_have_string_strtoarray in
+1)
+	return 0
+	;;
+esac
+
+case $SCRIPT_LIB_ROOT in
+"")
+	_libroot=/usr/share/scriptlib
+	;;
+*)
+	_libroot=$SCRIPT_LIB_ROOT
+	;;
+esac
+
+. ${_libroot}/string/err
+
+#
+# strtoarray [-r] param string [...]
+#
+# -r     populate the array with ascii character values (octal).
+#        this is the old behaviour of strtoarray() before
+#        the introduction of this option.
+#
+# param  name of the parameter array we'll be writing to
+#        (cleared if already exists)) does not create it)
+#
+# string string to convert to the array.
+#
+#DESCRIPTION
+#
+# strtoarray() will take each element of the character string it receives
+# and populate one position in its destination array with the corresponding
+# string.
+#
+# use the raw option when the actual characters of the string might
+# be misinterpreted or caused undesired results.
+#
+#EXAMPLES
+#
+# when '-r' is specified, one could print back the string by using:
+#
+# $ for i in ${array[@]}; { printf \\$(printf "%o" $(( $i )) ); }
+#
+# or, alternatively, call arraytostr() also with '-r':
+#
+# $ arraytostr -r array
+#
+# when -r is not specified the individual members of the array are
+# the exact string characters that were input.  notable exception to
+# this are whitespace characters, as they'll likely be eaten by the
+# shell and set to null.  to deconstruct the array back to a 
+# also be used (without '-r'), or one could simply print them back
+# with a simple for loop:
+#
+# $ for i in ${array[@]}; { echo -n $i; }; echo
+#
+#CAVEATS
+#
+# the shell will condense plaintext whitespace between the positional
+# arguments to the function.  also, "$@" is safer than "$*" because the
+# latter seperates the positional params with the first char of IFS, the
+# former always uses a space.
+#
+# with '-r', treat the values as octal integers.
+#
+strtoarray()
+{
+	local funcname=strtoarray
+	local usage="$funcname(): usage: $funcname [-r] param string [...]"
+
+	if [ $# -eq 0 ]; then
+		warn EINVAL "$funcname(): \$param null"
+		warnx "$usage"
+		return 1
+	fi
+
+	#
+	# need to make sure $1 passed to us is not the name
+	# of *any* local variable in here or the results will
+	# be just about as undefined as is possible.
+	#
+	# need to keep this updated!
+	#
+	case $1 in
+	__arg)		warn EINVAL "$funcname(): \$1 is a reserved word: $1"; return 1;;
+	__ch)		warn EINVAL "$funcname(): \$1 is a reserved word: $1"; return 1;;
+	__index)	warn EINVAL "$funcname(): \$1 is a reserved word: $1"; return 1;;
+	__param)	warn EINVAL "$funcname(): \$1 is a reserved word: $1"; return 1;;
+	__positional)	warn EINVAL "$funcname(): \$1 is a reserved word: $1"; return 1;;
+	__rawflag)	warn EINVAL "$funcname(): \$1 is a reserved word: $1"; return 1;;
+	__str_cutme)	warn EINVAL "$funcname(): \$1 is a reserved word: $1"; return 1;;
+	__str_next)	warn EINVAL "$funcname(): \$1 is a reserved word: $1"; return 1;;
+	__str_nextmask)	warn EINVAL "$funcname(): \$1 is a reserved word: $1"; return 1;;
+	__str_orig)	warn EINVAL "$funcname(): \$1 is a reserved word: $1"; return 1;;
+	__str_remain)	warn EINVAL "$funcname(): \$1 is a reserved word: $1"; return 1;;
+	esac
+
+	local __arg
+	local __ch
+	local __index=0
+	local __param
+	local __positional=1
+	local __rawflag=0
+	local __str_cutme
+	local __str_next
+	local __str_nextmask
+	local __str_orig
+	local __str_remain
+
+	OPTIND=1
+	while getopts :r __ch; do
+		case $__ch in
+		r)
+			__rawflag=$(( $__rawflag + 1 ))
+			;;
+		esac
+	done
+	shift $(( $OPTIND - 1 ))
+
+	__param=$1
+	shift
+
+	# clear out the destination param if it looks like there's anything in it
+	if ! __ch="$(eval echo \${#$__param[@]})"; then
+		warnx "$funcname(): failed to check contents of \$__param: '$__param'"
+		return 1
+	fi
+	if [ "$__ch" -gt 0 ]; then
+		if ! unset "$__param"; then
+			warnx "$funcname(): cannot unset \$__param: '$__param'"
+			return 1
+		fi
+	fi
+	__ch="$(eval echo \${$__param[0]})"
+	if [ ! -z "$__ch" ]; then
+		if ! unset "$__param"; then
+			warnx "$funcname(): cannot unset \$__param: '$__param'"
+			return 1
+		fi
+	fi
+
+	for __arg in "$@"; do
+
+		__ch=""
+		__str_orig=$__arg
+		__str_remain=
+		__str_cutme=
+		__str_nextmask=
+
+		while [ "$__str_cutme" != "$__str_orig" ]; do
+			# get next char
+			__str_remain=${__arg#$__str_cutme}
+			__str_nextmask=${__arg#$__str_cutme?}
+			__ch=${__str_remain%$__str_nextmask}
+			__str_cutme=${__str_cutme}${__ch}
+
+			# stuff into array
+			case $__rawflag in
+			0)
+				if ! eval $__param[$__index]="\\$__ch"; then
+					warnx "$funcname(): error setting \$__param[\$__index]"
+					return 1
+				fi
+				;;
+			*)
+				if ! eval $__param[$__index]=$(printf "%o" \'"$__ch"); then
+					warnx "$funcname(): error setting \$__param[\$__index]"
+					return 1
+				fi
+				;;
+			esac
+			__index=$(( $__index + 1 ))
+		done	
+
+		#
+		# add a space *between* any positional parameters we were invoked with
+		# (eg, don't add one after the last)
+		#
+		if [ $__positional -lt $# ]; then
+			case $__rawflag in
+			0)
+				if ! eval $__param[$__index]="\\ "; then
+					warnx "$funcname(): error setting \$__param[\$__index]"
+					return 1
+				fi
+				;;
+			*)
+				if ! eval $__param[$__index]=$(printf "%o" \'" "); then
+					warnx "$funcname(): error setting \$__param[\$__index]"
+					return 1
+				fi
+				;;
+			esac
+			__index=$(( $__index + 1 ))
+		fi
+		__positional=$(( $__positional + 1 ))
+
+	done
+
+	return 0
+}
+
+#
+# doesn't actually modify any param in the caller's context, but just takes
+# the given string and echos it back with each character seperated by a space.
+# this can be used to manually populate arrays such as:
+#
+# for char in $(strtoarray_lite abcdefg); do
+# 	param[${#param[@]}]=$char
+# done
+#
+# multiple input strings are delineated in the output by tabs instead of spaces.
+#
+strtoarray_lite()
+{
+	local funcname=strtoarray_lite
+	local usage="$funcname(): usage: $funcname [-r] string [...]"
+	local rawflag=0 ch
+	local args arg mask
+
+	if ! args=$(getopt r "$@"); then
+		warn EINVAL "$funcname(): '$@'"
+		warnx "$usage"
+		return 1
+	fi
+	set -- $args
+	while [ $# -gt 0 ]; do
+		case $1 in
+		-r)
+			rawflag=$(( $rawflag + 1 ))
+			shift
+			;;
+		-- | ' --')
+			shift
+			break
+			;;
+		esac
+	done
+
+	if [ $# -eq 0 ]; then
+		warn EINVAL "$funcname(): \$string null"
+		warnx "$usage"
+		return 1
+	fi
+
+	while true; do
+		arg=$1
+		shift
+		while true; do
+			if [ -z "$arg" ]; then
+				break
+			fi
+			if [ ! -z "$ch" ]; then
+				echo -n " "
+			fi
+			mask=${arg#?}
+			ch=${arg%%$mask}
+			case $rawflag in
+			0)
+				echo -n "$ch"
+				;;
+			*)
+				printf "%o" \'"$ch"
+				;;
+			esac
+			arg=${arg#$ch}
+		done
+		if [ $# -eq 0 ]; then
+			break
+		fi
+		printf '\t'
+	done
+
+}
+
+__script_lib_have_string_strtoarray=1
