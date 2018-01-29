@@ -1,0 +1,435 @@
+#!/bin/sh
+
+# $Id$
+
+set -e
+
+progname="$(basename $0) test cases"
+
+case $SCRIPT_LIB_ROOT in
+"")
+	_libroot=/usr/share/scriptlib
+	;;
+*)
+	_libroot=$SCRIPT_LIB_ROOT
+	;;
+esac
+
+. ${_libroot}/net/inet
+tests=0 # running total performed
+errors=0
+
+#
+# isipv4()
+#
+isipv4_TRUES="
+	1.1.1.1
+	192.168.7.17
+	66.133.190.56
+	8.13.0.0
+	0.1.2.3
+	99.88.73.1
+"
+isipv4_FALSES="
+	1.1.1
+	1.1.1.1/24
+	::1
+	fe80::1
+	123.456.789.123
+	test
+	256.256.256.256
+"
+for test in $isipv4_TRUES; do
+	tests=$(( tests + 1 ))
+	if ! isipv4 "$test"; then
+		echo "FAILED: isipv4 '$test'"
+		errors=$(( errors + 1 ))
+	fi
+done
+for test in $isipv4_$FALSES "$isipv4_FALSES" \"\" ""; do
+	tests=$(( tests + 1 ))
+	if isipv4 "$test"; then
+		echo "FAILED: isipv4 '$test'"
+		errors=$(( errors + 1 ))
+	fi
+done
+
+#
+# isipv6()
+#
+isipv6_TRUES="
+	::1
+	fe80::1
+	ff0f::
+	f00f::%0
+	2001:1f01:357::2
+	198f:8711:288d:c8c8:1918:ff9f:98c3:33b3%bge0
+"
+isipv6_FALSES="
+	1:::
+	:::1
+	1::1/23
+	fe80
+	c873::0::1111
+	8n31:98c7:1919:bnb3::
+	fe80::212:3fff:fe06:e7cc%%bge0
+	87318:19831::83831
+	66.133.190.56
+	jwm
+	123.456.789.123
+	256.256.256.256
+"
+for test in $isipv6_TRUES; do
+	if ! isipv6 "$test"; then
+		echo "FAILED: isipv6 '$test'"
+		errors=$(( errors + 1 ))
+	fi
+done
+for test in $isipv6_FALSES "$isipv6_FALSES" \"\" ""; do
+	if isipv6 "$test"; then
+		echo "FAILED: isipv6 '$test'"
+		errors=$(( errors + 1 ))
+	fi
+done
+
+#
+# isrfc1918()
+#
+isrfc1918_TRUES="
+	10.0.0.0
+	10.127.127.1
+	10.255.255.255
+	172.16.0.0
+	172.24.127.1
+	172.31.255.255
+	192.168.0.0
+	192.168.127.1
+	192.168.255.255
+"
+isrfc1918_FALSES="
+	9.255.255.255
+	11.0.0.0
+	jwm
+	66.133.190.56
+	170.215.255.114
+	172.15.255.255
+	172.32.172.32
+	192.68.1.1
+	255.255.255.255
+"
+for test in $isrfc1918_TRUES; do
+	tests=$(( tests + 1 ))
+	if ! isrfc1918 "$test"; then
+		echo "FAILED: isrfc1918 '$test'"
+		errors=$(( errors + 1 ))
+	fi
+done
+for test in $isrfc1918_FALSES "$isrfc1918_FALSES" \"\" ""; do
+	tests=$(( tests + 1 ))
+	if isrfc1918 "$test"; then
+		echo "FAILED: isrfc1918 '$test'"
+		errors=$(( errors + 1 ))
+	fi
+done
+
+#
+# isip()
+#
+# testing the false case here needs its own param because false 1918 might be true IPv4, and
+# false IPv4 might be true IPv6 and so on, so just going to omit testing false for now
+#
+for test in $isipv4_TRUES $isipv6_TRUES $isrfc1918_TRUES; do
+	tests=$(( tests + 1 ))
+	if ! isip "$test"; then
+		echo "FAILED: isip '$test'"
+		errors=$(( errors + 1 ))
+	fi
+done
+for test in \"\" ""; do
+	tests=$(( tests + 1 ))
+	if isip "$test"; then
+		echo "FAILED: isip '$test'"
+		errors=$(( errors + 1 ))
+	fi
+done
+
+#
+# inet_aton
+#
+test=inet_aton
+unset question answer || true
+for q in \
+	0.0.0.0 \
+	0 \
+	255.255.255.255 \
+	127.16777215 \
+	128.0.256 \
+	11.22.33.44
+do
+	question[${#question[@]}]=$q
+done
+
+for a in \
+	0 \
+	0 \
+	4294967295 \
+	2147483647 \
+	2147483904 \
+	185999660
+do
+	answer[${#answer[@]}]=$a
+done
+
+x=0
+while [ $x -lt ${#question[@]} ]; do
+	tests=$(( tests + 1 ))
+	if ! ch=$($test "${question[$x]}"); then
+		echo "FAILED: $test '${question[$x]}'"
+		errors=$(( errors + 1 ))
+		x=$(( x + 1 ))
+		continue
+	fi
+	case $ch in
+	${answer[$x]})
+		x=$(( x + 1 ))
+		continue
+		;;
+	esac
+	echo "FAILED: $test '$ch' != '${answer[$x]}'"
+	errors=$(( errors + 1 ))
+	x=$(( x + 1 ))
+done
+
+# XXX inet_ntoa
+# XXX cidr_network
+# XXX cidr_isin
+# XXX cidr_nmtop
+# XXX cidr_ptonm
+# XXX cidr_ipdump
+# XXX cidr_supernet
+
+#
+# swap32()
+#
+test=swap32
+unset question answer || true
+for q in \
+	1 \
+	255 \
+	256 \
+	65535 \
+	65536 \
+	12731723 \
+	16777213 \
+	16777214 \
+	16777215 \
+	2147483647 \
+	2147483648 \
+	4294901757 \
+	4294967295 
+do
+	question[${#question[@]}]=$q
+done
+
+for a in \
+	16777216 \
+	4278190080 \
+	65536 \
+	4294901760 \
+	256 \
+	1262862848 \
+	4261412608 \
+	4278189824 \
+	4294967040 \
+	4294967167 \
+	128 \
+	4261412607 \
+	4294967295 
+do
+	answer[${#answer[@]}]=$a
+done
+
+x=0
+while [ $x -lt ${#question[@]} ]; do
+	tests=$(( tests + 1 ))
+	if ! ch=$($test "${question[$x]}"); then
+		echo "FAILED: $test '${question[$x]}'"
+		errors=$(( errors + 1 ))
+		x=$(( x + 1 ))
+		continue
+	fi
+	case $ch in
+	${answer[$x]})
+		x=$(( x + 1 ))
+		continue
+		;;
+	esac
+	echo "FAILED: $test '$ch' != '${answer[$x]}'"
+	errors=$(( errors + 1 ))
+	x=$(( x + 1 ))
+done
+
+#
+# cidr_network6
+#
+test=cidr_network6
+unset question answer || true
+for a in \
+	0:0:0:0:0:0:0:0 \
+	8000:0:0:0:0:0:0:0 \
+	c000:0:0:0:0:0:0:0 \
+	e000:0:0:0:0:0:0:0 \
+	f000:0:0:0:0:0:0:0 \
+	f800:0:0:0:0:0:0:0 \
+	fc00:0:0:0:0:0:0:0 \
+	fe00:0:0:0:0:0:0:0 \
+	ff00:0:0:0:0:0:0:0 \
+	ff80:0:0:0:0:0:0:0 \
+	ffc0:0:0:0:0:0:0:0 \
+	ffe0:0:0:0:0:0:0:0 \
+	fff0:0:0:0:0:0:0:0 \
+	fff8:0:0:0:0:0:0:0 \
+	fffc:0:0:0:0:0:0:0 \
+	fffe:0:0:0:0:0:0:0 \
+	ffff:0:0:0:0:0:0:0 \
+	ffff:8000:0:0:0:0:0:0 \
+	ffff:c000:0:0:0:0:0:0 \
+	ffff:e000:0:0:0:0:0:0 \
+	ffff:f000:0:0:0:0:0:0 \
+	ffff:f800:0:0:0:0:0:0 \
+	ffff:fc00:0:0:0:0:0:0 \
+	ffff:fe00:0:0:0:0:0:0 \
+	ffff:ff00:0:0:0:0:0:0 \
+	ffff:ff80:0:0:0:0:0:0 \
+	ffff:ffc0:0:0:0:0:0:0 \
+	ffff:ffe0:0:0:0:0:0:0 \
+	ffff:fff0:0:0:0:0:0:0 \
+	ffff:fff8:0:0:0:0:0:0 \
+	ffff:fffc:0:0:0:0:0:0 \
+	ffff:fffe:0:0:0:0:0:0 \
+	ffff:ffff:0:0:0:0:0:0 \
+	ffff:ffff:8000:0:0:0:0:0 \
+	ffff:ffff:c000:0:0:0:0:0 \
+	ffff:ffff:e000:0:0:0:0:0 \
+	ffff:ffff:f000:0:0:0:0:0 \
+	ffff:ffff:f800:0:0:0:0:0 \
+	ffff:ffff:fc00:0:0:0:0:0 \
+	ffff:ffff:fe00:0:0:0:0:0 \
+	ffff:ffff:ff00:0:0:0:0:0 \
+	ffff:ffff:ff80:0:0:0:0:0 \
+	ffff:ffff:ffc0:0:0:0:0:0 \
+	ffff:ffff:ffe0:0:0:0:0:0 \
+	ffff:ffff:fff0:0:0:0:0:0 \
+	ffff:ffff:fff8:0:0:0:0:0 \
+	ffff:ffff:fffc:0:0:0:0:0 \
+	ffff:ffff:fffe:0:0:0:0:0 \
+	ffff:ffff:ffff:0:0:0:0:0 \
+	ffff:ffff:ffff:8000:0:0:0:0 \
+	ffff:ffff:ffff:c000:0:0:0:0 \
+	ffff:ffff:ffff:e000:0:0:0:0 \
+	ffff:ffff:ffff:f000:0:0:0:0 \
+	ffff:ffff:ffff:f800:0:0:0:0 \
+	ffff:ffff:ffff:fc00:0:0:0:0 \
+	ffff:ffff:ffff:fe00:0:0:0:0 \
+	ffff:ffff:ffff:ff00:0:0:0:0 \
+	ffff:ffff:ffff:ff80:0:0:0:0 \
+	ffff:ffff:ffff:ffc0:0:0:0:0 \
+	ffff:ffff:ffff:ffe0:0:0:0:0 \
+	ffff:ffff:ffff:fff0:0:0:0:0 \
+	ffff:ffff:ffff:fff8:0:0:0:0 \
+	ffff:ffff:ffff:fffc:0:0:0:0 \
+	ffff:ffff:ffff:fffe:0:0:0:0 \
+	ffff:ffff:ffff:ffff:0:0:0:0 \
+	ffff:ffff:ffff:ffff:8000:0:0:0 \
+	ffff:ffff:ffff:ffff:c000:0:0:0 \
+	ffff:ffff:ffff:ffff:e000:0:0:0 \
+	ffff:ffff:ffff:ffff:f000:0:0:0 \
+	ffff:ffff:ffff:ffff:f800:0:0:0 \
+	ffff:ffff:ffff:ffff:fc00:0:0:0 \
+	ffff:ffff:ffff:ffff:fe00:0:0:0 \
+	ffff:ffff:ffff:ffff:ff00:0:0:0 \
+	ffff:ffff:ffff:ffff:ff80:0:0:0 \
+	ffff:ffff:ffff:ffff:ffc0:0:0:0 \
+	ffff:ffff:ffff:ffff:ffe0:0:0:0 \
+	ffff:ffff:ffff:ffff:fff0:0:0:0 \
+	ffff:ffff:ffff:ffff:fff8:0:0:0 \
+	ffff:ffff:ffff:ffff:fffc:0:0:0 \
+	ffff:ffff:ffff:ffff:fffe:0:0:0 \
+	ffff:ffff:ffff:ffff:ffff:0:0:0 \
+	ffff:ffff:ffff:ffff:ffff:8000:0:0 \
+	ffff:ffff:ffff:ffff:ffff:c000:0:0 \
+	ffff:ffff:ffff:ffff:ffff:e000:0:0 \
+	ffff:ffff:ffff:ffff:ffff:f000:0:0 \
+	ffff:ffff:ffff:ffff:ffff:f800:0:0 \
+	ffff:ffff:ffff:ffff:ffff:fc00:0:0 \
+	ffff:ffff:ffff:ffff:ffff:fe00:0:0 \
+	ffff:ffff:ffff:ffff:ffff:ff00:0:0 \
+	ffff:ffff:ffff:ffff:ffff:ff80:0:0 \
+	ffff:ffff:ffff:ffff:ffff:ffc0:0:0 \
+	ffff:ffff:ffff:ffff:ffff:ffe0:0:0 \
+	ffff:ffff:ffff:ffff:ffff:fff0:0:0 \
+	ffff:ffff:ffff:ffff:ffff:fff8:0:0 \
+	ffff:ffff:ffff:ffff:ffff:fffc:0:0 \
+	ffff:ffff:ffff:ffff:ffff:fffe:0:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:0:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:8000:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:c000:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:e000:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:f000:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:f800:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:fc00:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:fe00:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ff00:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ff80:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffc0:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffe0:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:fff0:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:fff8:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:fffc:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:fffe:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:8000 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:c000 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:e000 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:f000 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:f800 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:fc00 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:fe00 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:ff00 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:ff80 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffc0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffe0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:fff0 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:fff8 \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffc \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffe \
+	ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+do
+	answer[${#answer[@]}]=$a
+done
+x=0
+while [ $x -le 128 ]; do
+	tests=$(( tests + 1 ))
+	if ! ch=$($test "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/$x"); then
+		echo "FAILED: $test 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/$x'"
+		errors=$(( errors + 1 ))
+		x=$(( x + 1 ))
+		continue
+	fi
+	case $ch in
+	${answer[$x]})
+		x=$(( x + 1 ))
+		continue
+		;;
+	esac
+	echo "FAILED: $test '$ch' != '${answer[$x]}'"
+	errors=$(( errors + 1 ))
+	x=$(( x + 1 ))
+done
+
+if [ $errors -ne 0 ]; then
+        echo "$progname $errors/$tests tests FAILED"
+	exit 1
+fi
+echo "$tests passed"
+

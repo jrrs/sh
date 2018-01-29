@@ -1,0 +1,53 @@
+#!/bin/sh
+
+# $Id$
+
+set -e
+
+dir=${0%/*}
+
+echo "== running test cases =="
+for test in $dir/*/*; do
+	case $test in
+	*"*"*)
+		echo "skipping \$test with asterisk in it: '$test'"
+		continue
+		;;
+	"")
+		echo "skipping null \$test"
+		continue
+		;;
+	esac
+
+	if [ ! -x "$test" ]; then
+		echo "skipping non-executable \$test: '$test'"
+		continue
+	fi
+	
+	echo "$test"
+	if ! $test; then
+		echo "failed \$test: '$test'"
+	fi
+done
+
+echo "== syntax checking library files =="
+for a in $dir/../*; do
+	if [ ! -d "$a" ]; then
+		continue
+	fi
+	case $a in
+	$dir)
+		# don't do ourselves
+		continue
+		;;
+	esac
+	for file in $a/*; do
+		if [ ! -f "$file" ]; then
+			continue
+		fi
+		echo $file
+		if ! sh -n "$file"; then
+			echo "failed \$file: '$file'"
+		fi
+	done
+done

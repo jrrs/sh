@@ -1,0 +1,165 @@
+#!/bin/sh
+
+# $Id$
+
+set -e
+
+progname="$(basename $0) test cases"
+errcount=0
+
+if [[ ! -z "$SCRIPT_LIB_ROOT" ]]; then
+	_libroot=$SCRIPT_LIB_ROOT
+else
+	_libroot=/usr/share/scriptlib
+fi
+
+. ${_libroot}/string/strtoarray
+
+#
+# correct invoke
+#
+string=
+if ! strtoarray string abcdef || [[
+	${string[0]} != 'a' ||
+	${string[1]} != 'b' ||
+	${string[2]} != 'c' ||
+	${string[3]} != 'd' ||
+	${string[4]} != 'e' ||
+	${string[5]} != 'f'
+]]; then
+	echo "FAILED: strtoarray string abcdef"
+	let ++errcount
+fi
+
+#
+# invoke when $1 is dirty
+#
+string=
+if err=$(strtoarray string abcdef); then
+	echo "FAILED: strtoarray string abcdef - second run"
+	let ++errcount
+fi
+unset string
+
+#
+# invoke when $1 is unset
+#
+if err=$(strtoarray string abcdef); then
+	echo "FAILED: strtoarray string abcdef - \$1 string unset but strarray() didn't care"
+	let ++errcount
+fi
+
+#
+# reserved word
+#
+__param=
+if err=$(strtoarray __param abcdef); then
+	echo "FAILED: strtoarray __param abcdef - should have caught reserved word __param"
+	let ++errcount
+fi
+
+#
+# TABS
+#
+# normal
+#
+string=
+if ! strtoarray string 't	T	' || [[
+	${string[0]} != 't' ||
+	${string[1]} != '	' ||
+	${string[2]} != 'T' ||
+	${string[3]} != '	' ||
+	${#string[@]} -ne 4
+]]; then
+	echo "FAILED: strtoarray string \"t<tab>T<tab>\""
+	let ++errcount
+fi
+unset string
+#
+# raw
+#
+string=
+if ! strtoarray -r string 't	T	' || [[
+	${string[0]} != '16#74' ||
+	${string[1]} != '16#9' ||
+	${string[2]} != '16#54' ||
+	${string[3]} != '16#9' ||
+	${#string[@]} -ne 4
+]]; then
+	echo "FAILED: strtoarray -r string \"t<tab>T<tab>\""
+	let ++errcount
+fi
+unset string
+
+#
+# SPACES, should succeed
+#
+# normal
+#
+string=
+if ! strtoarray string 'S s ' || [[
+	${string[0]} != 'S' ||
+	${string[1]} != ' ' ||
+	${string[2]} != 's' ||
+	${string[3]} != ' ' ||
+	${#string[@]} -ne 4
+]]; then
+	echo "FAILED: strtoarray string \"s<space>s<space>\""
+	let ++errcount
+fi
+unset string
+#
+# raw
+#
+string=
+if ! strtoarray -r string 'S s ' || [[
+	${string[0]} != '16#53' ||
+	${string[1]} != '16#20' ||
+	${string[2]} != '16#73' ||
+	${string[3]} != '16#20' ||
+	${#string[@]} -ne 4
+]]; then
+	echo "FAILED: strtoarray -r string \"s<space>s<space>\""
+	let ++errcount
+fi
+unset string
+
+#
+# multiple args, should succeed
+#
+# normal
+#
+string=
+if ! strtoarray string a b c || [[
+	${string[0]} != 'a' ||
+	${string[1]} != ' ' ||
+	${string[2]} != 'b' ||
+	${string[3]} != ' ' ||
+	${string[4]} != 'c' ||
+	${#string[@]} -ne 5
+]]; then
+	echo "FAILED: strtoarray string \"a\" \"b\" \"c\""
+	let ++errcount
+fi
+unset string
+#
+# raw
+#
+string=
+if ! strtoarray -r string a b c || [[
+	${string[0]} != '16#61' ||
+	${string[1]} != '16#20' ||
+	${string[2]} != '16#62' ||
+	${string[3]} != '16#20' ||
+	${string[4]} != '16#63' ||
+	${#string[@]} -ne 5
+]]; then
+	echo "FAILED: strtoarray -r string \"a\" \"b\" \"c\""
+	let ++errcount
+fi
+unset string
+
+if [[ errcount -ne 0 ]]; then
+	echo "$progname $errcount tests FAILED"
+	exit 1
+fi

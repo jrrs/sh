@@ -1,0 +1,65 @@
+#!/bin/sh
+
+set -e
+
+progname="$(basename $0) test cases"
+errcount=0
+
+if [[ ! -z "$SCRIPT_LIB_ROOT" ]]; then
+	_libroot=$SCRIPT_LIB_ROOT
+else
+	_libroot=/usr/share/scriptlib
+fi
+
+. ${_libroot}/string/isctype
+
+#
+# isdigit()
+#
+# isdigit doesn't evaluate the argument given, so things like '0xffff' need to be
+# evaluated prior to handing to isdigit.  i believe this is consistent with C isdigit(3)
+# and besides, there is isxdigit() for that.
+#
+isdigit_TRUES="
+	1
+	$RANDOM
+	$SECONDS
+	0
+	0000
+	65535
+	65536
+	131071
+	131072
+	16777213
+	16777214
+	4294967295
+	4294967296
+"
+isdigit_FALSES="
+	jwm
+	RANDOM
+	SECONDS
+	\$RANDOM
+	\$SECONDS
+	-1
+	0x20
+"
+for test in $isdigit_TRUES "$isdigit_TRUES"; do
+	if ! isdigit $test; then
+		echo "FAILED: isdigit \"$test\""
+		let ++errcount
+	fi
+done
+for test in $isdigit_FALSES "$isdigit_FALSES" \"\" ""; do
+	if isdigit $test; then
+		echo "FAILED: isdigit \"$test\""
+		let ++errcount
+	fi
+done
+
+if [[ errcount -ne 0 ]]; then
+        echo "$progname $errcount tests FAILED"
+        exit 1
+fi
+echo "passed"
+
