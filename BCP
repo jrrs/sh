@@ -8,9 +8,11 @@ deviations are likely to exist because i'm far from perfect.
 
 - these guidelines are meant to optimize on both portability and readability.
 
+- if something is called out in documention as deprecated, stop using it.
+
 # INTERPRETER LINE (aka "shebang")
 - make an effort by default to make code compatible with dash(1).  dash is /bin/sh on a few contemporary GNU distributions (debian, ubuntu, ...).  
-- prefer an interpreter line of just '/bin/sh' by default.  if specifying 'bash' or 'ksh' or 'zsh' is *required* or not using one of them would otherwise harm the readability of the script, use the /usr/bin/env trampoline instead of hardcoding the path to the shell.  hardcoding it is harmful to portability.
+- prefer an interpreter line of just '/bin/sh' by default.  if specifying 'bash' or 'ksh' or 'zsh' is *required* or not using one of them would otherwise harm the readability of the script, use the /usr/bin/env trampoline instead of hardcoding the path to the shell.
 - do not pass shell arguments on the interpreter line.  e.g.: don't '#!/bin/sh -e'.  rather, just '#!/bin/sh' and then 'set -e' below.
 
 # PARAMETERS
@@ -18,7 +20,7 @@ deviations are likely to exist because i'm far from perfect.
 - there is no portable one-shot way to set an array.  bash uses 'array=( one two three four )' and ksh uses 'set -A array one two three four'.  a portable option is to do a for-loop with an increasing iterator, similar to:
 	x=0
 	for value in one two three four; do
-		array[$x]=$value
+		array[x]=$value
 		x=$(( x + 1 ))
 	done
 - in parameter assignment where the RHS/value is a single bareword, quotes are not necessary.  otherwise, quote the RHS/value.
@@ -29,13 +31,12 @@ deviations are likely to exist because i'm far from perfect.
 - keep parameter names consistent with commandline/function argument descriptions.  e.g.: if usage() says: "... [-m module_name]", then use 'module_name' as the name of the parameter in the corresponding code, don't abbreviate it to 'modname' or something.
 
 # EVALUATIONS
-- again, always quote parameters
-- please dont && write code || like this.  it is harder to read than a properly fleshed out if-clause and optimizes for character count instead of comprehension time.  it can be said that the Apple OpenSSL bug that happened is entirely because of people's insistence on using unencapsulated post-conditional clauses like this style encourages.
+- please dont && write code || like this.  it is harder to read than a properly fleshed out if-clause and optimizes for character count instead of comprehension time.  it can be said that the Apple OpenSSL bug that happened is entirely because of people's insistence on using unencapsulated post-conditional clauses like this style encourages [https://nakedsecurity.sophos.com/2014/02/24/anatomy-of-a-goto-fail-apples-ssl-bug-explained-plus-an-unofficial-patch/]
 - prefer 'case' for lexical comparison.  'case' is slightly faster than '[' and is safer and harder to shoot oneself in the foot with.
 - prefer 'case' for boolean numerical comparison.  if something is more than boolean, then go ahead and use '['
 - prefer getopts builtin over userland getopt(1).  builtins are faster and getopt(1) is clunkier to use.
-- never compare a supposedly numeric parameter against anything before ensuring it's numeric.  avoid "unary operator expected" errors; they're easy to prevent.
-- in general i try to test the failure case first, handle that in the post-conditional clause, and then have success be handled outside.
+- never compare a supposedly numeric parameter against anything before ensuring it's numeric; avoid "unary operator expected" errors, they're easy to prevent.
+- test the failure case first, handle that in the post-conditional clause, and then have success be handled outside.
 e.g.:
 (unpreferred):
 	if true; then
@@ -44,13 +45,13 @@ e.g.:
 		something good
 		happened
 	else
-		oh crap
+		oh heck
 		something bad
 	fi
 
 (preferred):
 	if ! true; then
-		oh crap
+		oh heck
 		something bad
 	fi
 	bunch of
@@ -80,28 +81,28 @@ e.g.:
 	for filename in /etc/*; do
 		case "$filename" in
 		'/etc/*')
-			# oh crap if /etc is empty, /etc/* won't not expand to anything and
+			# if /etc is empty, /etc/* won't not expand to anything and
 			# so the shell just interpreted it as a literal string!
-			# oh crap we should bail
+			# oh heck we should bail
 			break
 			;;
 		esac
 		ok now
 		do stuff
 	done
+- 'failglob' is a bashism.
 
 # USERLAND
 - in nearly all cases, reaching out to the userland is more performance-expensive than running internal/builtin commands.  consider keeping things internal if there is no harm to readability.
 - do not hardcode paths to binaries.  instead, lean on PATH.  modify it if desired/required.  different distros put stuff wherever they want, and hier(7) means different things to different people.  clutter up PATH if needed.  that's what it is there for.
 - prefer portable userland commands.  'pkill' and 'pgrep' are more prolific than 'killall' and 'pidof'
 - avoid non-portable uses of userland commands.  e.g.: openbsd grep-and-friends support the '[:>:]' and '[:<:]' character classes, however these are not specified by POSIX and don't generally appear elsewhere.
-- be specifically cautious when passing arguments to 
 
 # MISC
 - (always) use 'set -e' and always test everything that could potentially fail.  code with 'set -e' in place which happens to miss capturing an operation which ends up failing *can* be cumbersome to debug, however this situation is far better than omitting 'set -e' and having the code just plow on after a failure it otherwise ought to have not proceeded past.  always using 'set -e' is a safety measure.  some people say they don't need to wear seatbelts because they "know what they are doing".  professional race drivers always wear multiple safety harnesses/measures, however.
-- avoid 'cd' anywhere.  if one must be done, please consider invoking a (subshell;).  requiring a change to PWD complicates debugging.
+- avoid 'cd' anywhere.  if one must be done, please consider invoking a (subshell;).  requiring a change to PWD complicates debugging and possibly even runtime.
 - i prefer to let STDERR out of the bag instead of collecting it myself.  perl has a common idiom of checking/grepping perl's "$@" to see if something went wrong, which makes sense for perl and how it's done there, but shell != perl.  in shell, i rely primarily on exit values unless the exit values end up being meaningless.  i've noticed that if i capture STDERR and pass it up the function chain, it can appear in a reverse order which is confusing.
 - if there is ever a time the script invokes mktemp(1), include an EXIT trap that performs a cleanup.  if desired, provide an argument such as '-k -- keep' that resets the EXIT trap back to its default allowing tmpdir contents to be retained.
-- prefer 'while ! thing' over 'until thing'.  we don't need both 'while' and 'until'.  thinking is hard and t.
+- prefer 'while ! thing' over 'until thing'.  we don't need both 'while' and 'until'.  thinking is hard.
 - prefer '[ ! -z "$thing" ]' over '[ -n "$thing" ]'.  "! -z" reads as "not zero", '-n' generally connotes a 'noop' mode, and thinking is hard.
-- longhand is almost always easier to read than shorthand.  burn a tmpfile on disk instead of trying to '| sed | awk | whatever' the crap out of a parameter.
+- longhand is almost always easier to read than shorthand.  burn a tmpfile on disk instead of trying to '| sed | awk | whatever' the heck out of a parameter.
